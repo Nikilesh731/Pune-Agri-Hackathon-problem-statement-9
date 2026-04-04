@@ -1,0 +1,79 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+
+# Virtualenvs
+.venv/
+venv/
+env/
+ENV/
+
+# Pipenv
+Pipfile.lock
+
+# Pytest
+.pytest_cache/
+
+# Build/artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Logs
+logs/
+*.log
+
+# Coverage
+htmlcov/
+coverage.xml
+.coverage
+
+# IDEs
+.vscode/
+.idea/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files / secrets
+.env
+.env.*
+secrets.json
+*.pem
+*.key
+*.crt
+*.cer
+*.pfx
+*.p12
+
+# Databases
+*.sqlite3
+*.db
+
+# System files
+.DS_Store
+Thumbs.db
+
+# SSH
+.ssh/
+
+# Local config
+config/local.yml
+config/*.local
+
+# Generated
+generated/
+
+# Misc
+*.bak
+*.swp
+
+# Keep example env files
+!.env.example
