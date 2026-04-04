@@ -2,7 +2,10 @@
  * Applications API Service
  * Purpose: Service layer for application-related API calls
  */
+
 import { apiClient } from './api'
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
 export interface Application {
   id: string
@@ -95,7 +98,6 @@ export interface FarmInfo {
 }
 
 export interface ExtractedData {
-  // Backend frozen contract fields
   document_type?: string
   structured_data?: Record<string, any>
   extracted_fields?: Record<string, any>
@@ -110,45 +112,14 @@ export interface ExtractedData {
     confidence?: number
     reasoning?: string[]
   }
-  canonical?: {
-    applicant?: {
-      name?: string
-      guardian_name?: string
-      aadhaar_number?: string
-      mobile_number?: string
-      address?: string
-      village?: string
-      district?: string
-      state?: string
-    }
-    agriculture?: {
-      land_size?: string
-      land_unit?: string
-      survey_number?: string
-      crop_name?: string
-      season?: string
-    }
-    request?: {
-      scheme_name?: string
-      request_type?: string
-      requested_amount?: string
-      issue_summary?: string
-      claim_reason?: string
-    }
-    document_meta?: {
-      supporting_doc_type?: string
-      document_date?: string
-      reference_number?: string
-      source_file_name?: string
-    }
-    document_type?: string
-  }
-  
-  // Temporary compatibility fields (marked for removal) - only actively used fields retained
-  missingFields?: string[]     // @deprecated - use missing_fields (still used by ApplicationSections)
-  extractionConfidence?: number // @deprecated - use confidence (still used by ApplicationSections)
-  village?: string        // @deprecated - use canonical.applicant.village (still used by ApplicationSections)
-  [key: string]: any // Allow additional dynamic fields
+  canonical?: any
+
+  // temporary compatibility
+  missingFields?: string[]
+  extractionConfidence?: number
+  village?: string
+
+  [key: string]: any
 }
 
 export interface CreateApplicationInput {
@@ -182,7 +153,7 @@ class ApplicationsService {
 
   async getApplications(query: ApplicationQuery = {}): Promise<ApplicationsResponse> {
     const params = new URLSearchParams()
-    
+
     if (query.page) params.append('page', query.page.toString())
     if (query.limit) params.append('limit', query.limit.toString())
     if (query.status) params.append('status', query.status)
@@ -192,7 +163,6 @@ class ApplicationsService {
     const queryString = params.toString()
     const url = queryString ? `${this.endpoint}?${queryString}` : this.endpoint
 
-    // Add cache-busting headers for applications list to prevent 304 stale responses
     return apiClient.get<ApplicationsResponse>(url, {
       'Cache-Control': 'no-cache',
       'Pragma': 'no-cache'
@@ -200,15 +170,12 @@ class ApplicationsService {
   }
 
   async getApplicationById(id: string): Promise<Application> {
-    const response = await apiClient.get<Application>(`${this.endpoint}/${id}`)
-    // apiClient already returns parsed data, return response directly
-    return response
+    return apiClient.get<Application>(`${this.endpoint}/${id}`)
   }
 
   async createApplication(data: CreateApplicationInput): Promise<Application> {
     try {
-      const res = await apiClient.post<Application>(this.endpoint, data)
-      return res
+      return await apiClient.post<Application>(this.endpoint, data)
     } catch (error: any) {
       throw error.response?.data || error
     }
@@ -223,7 +190,7 @@ class ApplicationsService {
   }
 
   async getApplicationStatus(id: string): Promise<{ applicationId: string; status: string }> {
-    return apiClient.get<{ applicationId: string; status: string }>(`${this.endpoint}/${id}/status`)
+    return apiClient.get(`${this.endpoint}/${id}/status`)
   }
 
   async approveApplication(id: string): Promise<Application> {
@@ -243,35 +210,18 @@ class ApplicationsService {
   }
 
   async getFileUrl(id: string): Promise<{ fileUrl: string; fileName: string; fileType: string }> {
-    return apiClient.get<{ fileUrl: string; fileName: string; fileType: string }>(`${this.endpoint}/${id}/file-url`)
+    return apiClient.get(`${this.endpoint}/${id}/file-url`)
   }
 
   async getFileUrlByPath(path: string): Promise<{ fileUrl: string }> {
-    return apiClient.get<{ fileUrl: string }>(
-      `${this.endpoint}/file-url-by-path?path=${encodeURIComponent(path)}` 
-    )
+    return apiClient.get(`${this.endpoint}/file-url-by-path?path=${encodeURIComponent(path)}`)
   }
 
-  async getDashboardSummary(): Promise<{
-    total_applications: number
-    pending: number
-    approved: number
-    rejected: number
-    high_priority: number
-    risk_distribution: { low: number; medium: number; high: number }
-    last_updated: string
-  }> {
-    return apiClient.get<{
-      total_applications: number
-      pending: number
-      approved: number
-      rejected: number
-      high_priority: number
-      risk_distribution: { low: number; medium: number; high: number }
-      last_updated: string
-    }>('/dashboard/summary')
+  async getDashboardSummary(): Promise<any> {
+    return apiClient.get('/dashboard/summary')
   }
 
+  // ✅ FIXED UPLOAD FUNCTION
   async uploadApplicationFile(file: File): Promise<{
     success: boolean
     status: string
@@ -283,8 +233,7 @@ class ApplicationsService {
     const formData = new FormData()
     formData.append('file', file)
 
-    // Use fetch directly for FormData to avoid JSON.stringify
-    const response = await fetch(`/api${this.endpoint}/with-file`, {
+    const response = await fetch(`${API_BASE_URL}/api${this.endpoint}/with-file`, {
       method: 'POST',
       body: formData,
     })
@@ -292,7 +241,6 @@ class ApplicationsService {
     const data = await response.json()
 
     if (!response.ok) {
-      // For duplicate submissions (409), return the response data instead of throwing
       if (response.status === 409) {
         return data
       }

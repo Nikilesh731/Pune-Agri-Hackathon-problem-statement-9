@@ -3,10 +3,12 @@
  * Purpose: Centralized HTTP client for backend communication
  */
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+
 export class ApiClient {
   private baseUrl: string
 
-  constructor(baseUrl: string = '/api') {
+  constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl
   }
 
@@ -17,6 +19,7 @@ export class ApiClient {
     headers?: Record<string, string>
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`
+
     const config: RequestInit = {
       method,
       headers: {
@@ -31,18 +34,17 @@ export class ApiClient {
 
     try {
       const response = await fetch(url, config)
-      
+
       if (!response.ok) {
         const errorText = await response.text()
         throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`)
       }
 
-      // Handle empty responses
       const contentType = response.headers.get('content-type')
       if (contentType && contentType.includes('application/json')) {
         return await response.json()
       }
-      
+
       return {} as T
     } catch (error) {
       if (error instanceof Error) {
