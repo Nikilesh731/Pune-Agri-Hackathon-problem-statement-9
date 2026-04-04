@@ -114,7 +114,6 @@ export interface ExtractedData {
   }
   canonical?: any
 
-  // temporary compatibility
   missingFields?: string[]
   extractionConfidence?: number
   village?: string
@@ -163,10 +162,7 @@ class ApplicationsService {
     const queryString = params.toString()
     const url = queryString ? `${this.endpoint}?${queryString}` : this.endpoint
 
-    return apiClient.get<ApplicationsResponse>(url, {
-      'Cache-Control': 'no-cache',
-      'Pragma': 'no-cache'
-    })
+    return apiClient.get<ApplicationsResponse>(url)
   }
 
   async getApplicationById(id: string): Promise<Application> {
@@ -221,7 +217,6 @@ class ApplicationsService {
     return apiClient.get('/dashboard/summary')
   }
 
-  // ✅ FIXED UPLOAD FUNCTION
   async uploadApplicationFile(file: File): Promise<{
     success: boolean
     status: string
