@@ -20,7 +20,7 @@ interface Config {
 
 export const config: Config = {
   port: parseInt(process.env.PORT || '3001', 10),
-  nodeEnv: process.env.NODE_ENV || 'development',
+  nodeEnv: process.env.NODE_ENV || 'production',
   corsOrigin: process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(',')
         .map(origin => origin.trim())
@@ -29,7 +29,8 @@ export const config: Config = {
         'http://localhost:3000',
         'http://localhost:3002',
         'http://127.0.0.1:3000',
-        'http://127.0.0.1:3002'
+        'http://127.0.0.1:3002',
+        'https://pune-agri-hackathon-problem-stateme.vercel.app'
       ],
   jwtSecret: process.env.JWT_SECRET || 'your-secret-key',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '24h',
