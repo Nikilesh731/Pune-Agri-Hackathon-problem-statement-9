@@ -1,0 +1,7 @@
+file,expected_document_type,applicant_hint,notes
+01_scheme_application_pm_kisan.pdf,scheme_application,Ravi Kumar,Use this as a real PDF in E2E validation.
+02_subsidy_claim_drip_irrigation.pdf,subsidy_claim,Sita Devi,Use this as a real PDF in E2E validation.
+03_insurance_claim_crop_loss.pdf,insurance_claim,Suresh Patel,Use this as a real PDF in E2E validation.
+04_grievance_delayed_subsidy_payment.pdf,grievance,Ramesh Yadav,Use this as a real PDF in E2E validation.
+05_farmer_record_profile.pdf,farmer_record,Meena Kumari,Use this as a real PDF in E2E validation.
+06_supporting_document_land_receipt.pdf,supporting_document,Anil Verma,Use this as a real PDF in E2E validation.

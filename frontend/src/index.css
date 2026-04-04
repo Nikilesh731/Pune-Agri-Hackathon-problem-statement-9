@@ -1,0 +1,53 @@
+/**
+ * Global styles and Tailwind CSS imports
+ * Purpose: Base styling for the entire application - Agricultural Administration Portal Theme
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: system-ui, sans-serif;
+  }
+  
+  body {
+    background: linear-gradient(135deg, #f8fafb 0%, #f1f5f1 50%, #f8fafb 100%);
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  /* Agricultural themed surfaces */
+  .agri-surface {
+    background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(241,245,241,0.9) 100%);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(226,232,229,0.6);
+  }
+  
+  .agri-card {
+    background: rgba(255,255,255,0.8);
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(226,232,229,0.4);
+  }
+  
+  .agri-header-surface {
+    background: linear-gradient(135deg, rgba(240,249,240,0.8) 0%, rgba(220,242,227,0.6) 100%);
+  }
+  
+  .agri-primary {
+    background: linear-gradient(135deg, #2fa05a 0%, #1e7c4a 100%);
+  }
+  
+  .agri-shadow {
+    box-shadow: 0 1px 3px 0 rgba(30, 124, 74, 0.1), 0 1px 2px 0 rgba(30, 124, 74, 0.06);
+  }
+  
+  .agri-shadow-lg {
+    box-shadow: 0 4px 6px -1px rgba(30, 124, 74, 0.1), 0 2px 4px -1px rgba(30, 124, 74, 0.06);
+  }
+  
+  .agri-transition {
+    transition: all 0.3s ease-in-out;
+  }
+}

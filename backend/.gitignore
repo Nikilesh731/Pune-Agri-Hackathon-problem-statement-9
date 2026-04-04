@@ -1,0 +1,129 @@
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# Environment files
+# =========================
+.env
+.env.*
+!.env.example
+frontend/.env
+backend/.env
+ai-services/.env
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =========================
+# Node.js / Frontend / Backend
+# =========================
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+ai-services/node_modules/
+dist/
+build/
+coverage/
+.next/
+.turbo/
+.vercel/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+ai-services/venv/
+ai-services/.venv/
+
+# =========================
+# Python ML / model artifacts
+# =========================
+*.joblib
+# *.pkl
+# *.pickle
+
+# =========================
+# Prisma generated client / engines
+# =========================
+generated/
+src/generated/
+**/generated/prisma/
+**/query_engine-*.dll.node
+**/query_engine-*.dll.node.tmp*
+**/query_engine_bg.wasm
+
+# =========================
+# Runtime / temporary files
+# =========================
+tmp/
+temp/
+*.tmp
+*.bak
+
+# =========================
+# Backend specific
+# =========================
+backend/logs/
+backend/*.log
+
+# =========================
+# AI services specific
+# =========================
+ai-services/test_output.txt
+
+# =========================
+# Database / local storage
+# =========================
+*.sqlite
+*.sqlite3
+
+# =========================
+# Uploaded files / binaries / archives
+# =========================
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+
+# =========================
+# Keep important tracked files
+# =========================
+!frontend/package-lock.json
+!backend/package-lock.json
+!frontend/package.json
+!backend/package.json
+!ai-services/requirements.txt

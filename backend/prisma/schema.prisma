@@ -1,0 +1,227 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum ApplicationStatus {
+  UPLOADED
+  PROCESSING
+  CASE_READY
+  NEEDS_REVIEW
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  REQUIRES_ACTION
+}
+
+model Case {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  farmerId          String?  @map("farmer_id") @db.Uuid
+  caseType          String   @map("case_type") @db.VarChar(100)
+  status            String   @default("open") @db.VarChar(50)
+  title             String?  @db.VarChar(500)
+  summary           String?  @db.Text
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  farmer            Farmer?      @relation(fields: [farmerId], references: [id])
+  applications      Application[]
+
+  @@index([farmerId], map: "idx_cases_farmer_id")
+  @@index([caseType], map: "idx_cases_case_type")
+  @@index([status], map: "idx_cases_status")
+  @@map("cases")
+}
+
+model Farmer {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String?  @db.VarChar(255)
+  aadhaarNumber String?  @unique @map("aadhaar_number") @db.VarChar(20)
+  mobileNumber  String?  @map("mobile_number") @db.VarChar(20)
+  address       String?  @db.Text
+  village       String?  @db.VarChar(255)
+  district      String?  @db.VarChar(255)
+  state         String?  @db.VarChar(255)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  applications  Application[]
+  cases         Case[]
+
+  @@index([aadhaarNumber], map: "idx_farmers_aadhaar_number")
+  @@index([mobileNumber], map: "idx_farmers_mobile_number")
+  @@index([village], map: "idx_farmers_village")
+  @@map("farmers")
+}
+
+model Application {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  applicantId       String            @map("applicant_id") @db.VarChar(255)
+  schemeId          String            @map("scheme_id") @db.VarChar(255)
+  type              String            @db.VarChar(100)
+  status            ApplicationStatus @default(UPLOADED)
+  priorityScore     Int?              @map("priority_score") @db.Integer
+  reviewerId        String?           @map("reviewer_id") @db.VarChar(255)
+  reviewDate        DateTime?         @map("review_date") @db.Timestamptz(6)
+  decisionDate      DateTime?         @map("decision_date") @db.Timestamptz(6)
+  fileName          String?           @map("file_name") @db.VarChar(500)
+  fileUrl           String?           @map("file_url") @db.Text
+  fileSize          BigInt?           @map("file_size") @db.BigInt
+  fileType          String?           @map("file_type") @db.VarChar(100)
+  personalInfo      Json              @map("personal_info")
+  farmInfo          Json?             @map("farm_info")
+  documents         Json              @map("documents")
+  extractedData     Json?             @map("extracted_data")
+  normalizedContentHash String?       @map("normalized_content_hash") @db.VarChar(64)
+  aiSummary         String?           @map("ai_summary") @db.Text
+  fraudRiskScore    Float?            @map("fraud_risk_score") @db.DoublePrecision
+  fraudFlags        Json?             @map("fraud_flags")
+  verificationRecommendation String?  @map("verification_recommendation") @db.Text
+  aiProcessingStatus String?         @map("ai_processing_status") @db.VarChar(50)
+  ocrProcessedAt    DateTime?         @map("ocr_processed_at") @db.Timestamptz(6)
+  aiProcessedAt     DateTime?         @map("ai_processed_at") @db.Timestamptz(6)
+  confidence        Float?            @db.DoublePrecision
+  notes             String?           @db.Text
+  submissionDate    DateTime          @default(now()) @map("submission_date") @db.Timestamptz(6)
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  farmerId          String?           @map("farmer_id") @db.Uuid
+  caseId            String?           @map("case_id") @db.Uuid
+  versionNumber     Int               @default(1) @map("version_number")
+  parentApplicationId String?         @map("parent_application_id") @db.Uuid
+  farmer            Farmer?           @relation(fields: [farmerId], references: [id])
+  case              Case?             @relation(fields: [caseId], references: [id])
+  parentApplication Application?      @relation("ApplicationVersions", fields: [parentApplicationId], references: [id])
+  childApplications  Application[]    @relation("ApplicationVersions")
+
+  @@index([applicantId], map: "idx_applications_applicant_id")
+  @@index([schemeId], map: "idx_applications_scheme_id")
+  @@index([status], map: "idx_applications_status")
+  @@index([submissionDate], map: "idx_applications_submission_date")
+  @@index([priorityScore], map: "idx_applications_priority_score")
+  @@index([reviewerId], map: "idx_applications_reviewer_id")
+  @@index([farmerId], map: "idx_applications_farmer_id")
+  @@index([caseId], map: "idx_applications_case_id")
+  @@index([parentApplicationId], map: "idx_applications_parent_application_id")
+  @@index([versionNumber], map: "idx_applications_version_number")
+  @@index([applicantId, type], map: "idx_applications_applicant_type")
+  @@index([normalizedContentHash, farmerId, type, status], map: "idx_applications_duplicate_check")
+  @@map("applications")
+}
+
+enum DocumentType {
+  ID_PROOF
+  ADDRESS_PROOF
+  LAND_RECORD
+  INCOME_CERTIFICATE
+  BANK_STATEMENT
+  CROP_INSURANCE
+  OTHER
+}
+
+model Document {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  applicationId String       @map("application_id") @db.Uuid
+  type        DocumentType
+  fileName    String        @map("file_name") @db.VarChar(500)
+  fileUrl     String        @map("file_url") @db.Text
+  fileSize    BigInt?       @map("file_size") @db.BigInt
+  mimeType    String?       @map("mime_type") @db.VarChar(100)
+  confidence  Float?        @db.DoublePrecision
+  extractedData Json?        @map("extracted_data")
+  isVerified  Boolean       @default(false) @map("is_verified")
+  verifiedAt  DateTime?     @map("verified_at") @db.Timestamptz(6)
+  verifiedBy  String?       @map("verified_by") @db.VarChar(255)
+  versionNumber Int          @default(1) @map("version_number")
+  isLatest    Boolean       @default(true) @map("is_latest")
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([applicationId], map: "idx_documents_application_id")
+  @@index([type], map: "idx_documents_type")
+  @@index([isVerified], map: "idx_documents_is_verified")
+  @@index([versionNumber], map: "idx_documents_version_number")
+  @@index([isLatest], map: "idx_documents_is_latest")
+  @@map("documents")
+}
+
+enum FraudCaseStatus {
+  PENDING_REVIEW
+  UNDER_INVESTIGATION
+  CONFIRMED_FRAUD
+  FALSE_POSITIVE
+  RESOLVED
+}
+
+enum FraudRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model FraudCase {
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  applicationId String          @map("application_id") @db.Uuid
+  riskLevel     FraudRiskLevel
+  score         Float            @db.DoublePrecision
+  indicators    Json
+  status        FraudCaseStatus  @default(PENDING_REVIEW)
+  description   String?          @db.Text
+  investigationNotes Json?       @map("investigation_notes")
+  assignedTo    String?         @map("assigned_to") @db.VarChar(255)
+  resolvedAt    DateTime?       @map("resolved_at") @db.Timestamptz(6)
+  resolution    String?         @db.Text
+  resolutionTime Float?         @map("resolution_time") @db.DoublePrecision
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([applicationId], map: "idx_fraud_cases_application_id")
+  @@index([riskLevel], map: "idx_fraud_cases_risk_level")
+  @@index([status], map: "idx_fraud_cases_status")
+  @@map("fraud_cases")
+}
+
+model Officer {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  firstName   String   @map("first_name") @db.VarChar(100)
+  lastName    String   @map("last_name") @db.VarChar(100)
+  email       String   @unique @db.VarChar(255)
+  phone       String?  @db.VarChar(20)
+  badgeNumber String   @unique @map("badge_number") @db.VarChar(50)
+  departmentId String? @map("department_id") @db.Uuid
+  isActive    Boolean  @default(true) @map("is_active")
+  role        String?  @db.VarChar(50)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([departmentId], map: "idx_officers_department_id")
+  @@index([isActive], map: "idx_officers_is_active")
+  @@map("officers")
+}
+
+model Department {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @db.VarChar(100)
+  code        String   @unique @db.VarChar(20)
+  description String?  @db.Text
+  headOfficerId String? @map("head_officer_id") @db.Uuid
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([headOfficerId], map: "idx_departments_head_officer_id")
+  @@index([isActive], map: "idx_departments_is_active")
+  @@map("departments")
+}

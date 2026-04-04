@@ -1,0 +1,27 @@
+{
+  "name": "ai-smart-agriculture",
+  "version": "1.0.0",
+  "description": "AI Smart Agriculture Hackathon Project",
+  "scripts": {
+    "repo:map": "node scripts/generate-repo-map.js",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && npm run dev",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "cd backend && npm run build",
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install && cd ../ai-services && npm install",
+    "project:brain": "node scripts/project-brain.js"
+  },
+  "keywords": [
+    "agriculture",
+    "ai",
+    "hackathon"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.101.0",
+    "axios": "^1.14.0",
+    "form-data": "^4.0.5",
+    "node-fetch": "^3.3.2"
+  }
+}

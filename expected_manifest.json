@@ -1,0 +1,38 @@
+[
+  {
+    "file": "01_scheme_application_pm_kisan.pdf",
+    "expected_document_type": "scheme_application",
+    "applicant_hint": "Ravi Kumar",
+    "notes": "Use this as a real PDF in E2E validation."
+  },
+  {
+    "file": "02_subsidy_claim_drip_irrigation.pdf",
+    "expected_document_type": "subsidy_claim",
+    "applicant_hint": "Sita Devi",
+    "notes": "Use this as a real PDF in E2E validation."
+  },
+  {
+    "file": "03_insurance_claim_crop_loss.pdf",
+    "expected_document_type": "insurance_claim",
+    "applicant_hint": "Suresh Patel",
+    "notes": "Use this as a real PDF in E2E validation."
+  },
+  {
+    "file": "04_grievance_delayed_subsidy_payment.pdf",
+    "expected_document_type": "grievance",
+    "applicant_hint": "Ramesh Yadav",
+    "notes": "Use this as a real PDF in E2E validation."
+  },
+  {
+    "file": "05_farmer_record_profile.pdf",
+    "expected_document_type": "farmer_record",
+    "applicant_hint": "Meena Kumari",
+    "notes": "Use this as a real PDF in E2E validation."
+  },
+  {
+    "file": "06_supporting_document_land_receipt.pdf",
+    "expected_document_type": "supporting_document",
+    "applicant_hint": "Anil Verma",
+    "notes": "Use this as a real PDF in E2E validation."
+  }
+]
