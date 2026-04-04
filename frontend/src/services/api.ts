@@ -3,7 +3,10 @@
  * Purpose: Centralized HTTP client for backend communication
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const RAW_API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const API_BASE_URL = RAW_API_BASE_URL.endsWith('/api')
+  ? RAW_API_BASE_URL
+  : `${RAW_API_BASE_URL}/api`
 
 export class ApiClient {
   private baseUrl: string
