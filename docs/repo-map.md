@@ -1,6 +1,6 @@
 # Repo Map
 
-> Generated automatically on 2026-04-04T04:33:31.795Z
+> Generated automatically on 2026-04-04T16:31:44.465Z
 > Do not edit manually - run `npm run repo:map`
 
 ## Project Structure
@@ -105,12 +105,7 @@ backend/
   │       ├── query_engine_bg.js
   │       ├── query_engine_bg.wasm
   │       ├── query_engine-windows.dll.node
-  │       ├── query_engine-windows.dll.node.tmp20960
-  │       ├── query_engine-windows.dll.node.tmp23872
-  │       ├── query_engine-windows.dll.node.tmp2424
-  │       ├── query_engine-windows.dll.node.tmp2740
-  │       ├── query_engine-windows.dll.node.tmp36064
-  │       ├── query_engine-windows.dll.node.tmp5908
+  │       ├── query_engine-windows.dll.node.tmp17424
   │       ├── schema.prisma
   │       ├── wasm-edge-light-loader.mjs
   │       ├── wasm-worker-loader.mjs
@@ -214,21 +209,26 @@ ai-services/
   │   │   │   │   ├── document_classification.py
   │   │   │   │   └── extraction.py
   │   │   │   ├── __init__.py
+  │   │   │   ├── candidate_extraction_engine.py
   │   │   │   ├── classification_service.py
   │   │   │   ├── document_processing_router.py
   │   │   │   ├── document_processing_service.py
+  │   │   │   ├── document_schemas.py
+  │   │   │   ├── extraction_integration_helper.py
   │   │   │   ├── extraction_router.py
   │   │   │   ├── extraction_service.py
   │   │   │   ├── field_filter.py
   │   │   │   ├── generic_extractor.py
   │   │   │   ├── layout_analyzer.py
   │   │   │   ├── ml_priority.py
+  │   │   │   ├── money_extraction_validator.py
   │   │   │   ├── predictive_analytics.py
   │   │   │   ├── priority_model.pkl
   │   │   │   ├── processors.py
   │   │   │   ├── reasoning_engine.py
   │   │   │   ├── semantic_extractor.py
   │   │   │   ├── service_schema.py
+  │   │   │   ├── unified_extraction_orchestrator.py
   │   │   │   ├── utils.py
   │   │   │   └── workflow_service.py
   │   │   └── intelligence
@@ -262,7 +262,6 @@ ai-services/
   ├── README.md
   ├── requirements.txt
   ├── test_ai_fields.py
-  ├── test_output.txt
   └── test_production_intelligence.py
 shared/
   ├── constants
