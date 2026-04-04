@@ -5,10 +5,10 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { 
-  CheckCircle, 
-  Clock, 
-  AlertTriangle, 
+import {
+  CheckCircle,
+  Clock,
+  AlertTriangle,
   FileText,
   Search,
   Filter,
@@ -23,6 +23,11 @@ import { EmptyState } from '../components/ui/EmptyState'
 import { SectionCard } from '../components/ui/SectionCard'
 import { Button } from '../components/ui/Button'
 import { normalizeQueueItem, NormalizedQueueItem } from '../utils/applicationDetailMapper'
+import { apiClient } from '../services/api'
+
+interface VerificationQueueResponse {
+  items: any[]
+}
 
 export function VerificationPage() {
   const navigate = useNavigate()
@@ -42,16 +47,13 @@ export function VerificationPage() {
   const loadVerificationQueue = async () => {
     try {
       setLoading(true)
-      // Use the real verification queue endpoint
-      const response = await fetch('/api/applications/queue/verification')
-      if (!response.ok) {
-        throw new Error('Failed to load verification queue')
-      }
-      const data = await response.json()
-      
-      // Use the normalized queue mapper
-      const verificationItems = data.items.map((item: any) => normalizeQueueItem(item))
-      
+      setError(null)
+
+      const data = await apiClient.get<VerificationQueueResponse>('/applications/queue/verification')
+
+      const items = Array.isArray(data?.items) ? data.items : []
+      const verificationItems = items.map((item: any) => normalizeQueueItem(item))
+
       setQueue(verificationItems)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load verification queue')
@@ -69,25 +71,34 @@ export function VerificationPage() {
 
   const getPriorityColor = (level: string) => {
     switch (level) {
-      case 'high': return 'bg-red-100 text-red-700 border-red-200'
-      case 'medium': return 'bg-yellow-100 text-yellow-700 border-yellow-200'
-      case 'low': return 'bg-green-100 text-green-700 border-green-200'
-      default: return 'bg-gray-100 text-gray-700 border-gray-200'
+      case 'high':
+        return 'bg-red-100 text-red-700 border-red-200'
+      case 'medium':
+        return 'bg-yellow-100 text-yellow-700 border-yellow-200'
+      case 'low':
+        return 'bg-green-100 text-green-700 border-green-200'
+      default:
+        return 'bg-gray-100 text-gray-700 border-gray-200'
     }
   }
 
   const getRiskColor = (level: string) => {
     switch (level) {
-      case 'high': return 'text-red-600 bg-red-50'
-      case 'medium': return 'text-yellow-600 bg-yellow-50'
-      case 'low': return 'text-green-600 bg-green-50'
-      default: return 'text-gray-600 bg-gray-50'
+      case 'high':
+        return 'text-red-600 bg-red-50'
+      case 'medium':
+        return 'text-yellow-600 bg-yellow-50'
+      case 'low':
+        return 'text-green-600 bg-green-50'
+      default:
+        return 'text-gray-600 bg-gray-50'
     }
   }
 
   const sortQueue = (items: NormalizedQueueItem[]) => {
     return [...items].sort((a, b) => {
-      let aValue: any, bValue: any
+      let aValue: any
+      let bValue: any
 
       switch (sortBy) {
         case 'priority':
@@ -113,33 +124,34 @@ export function VerificationPage() {
 
       if (sortOrder === 'asc') {
         return aValue > bValue ? 1 : -1
-      } else {
-        return aValue < bValue ? 1 : -1
       }
+
+      return aValue < bValue ? 1 : -1
     })
   }
 
   const filteredQueue = sortQueue(
-    queue.filter(item => {
-      const matchesSearch = searchTerm === '' || 
+    queue.filter((item) => {
+      const matchesSearch =
+        searchTerm === '' ||
         item.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.fileName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.documentType.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.displayApplicantName?.toLowerCase().includes(searchTerm.toLowerCase())
-      
+
       const matchesStatus = statusFilter === 'all' || item.status === statusFilter
       const priorityLevel = getPriorityLevel(item.priorityScoreNormalized)
       const matchesPriority = priorityFilter === 'all' || priorityLevel === priorityFilter
-      
+
       return matchesSearch && matchesStatus && matchesPriority
     })
   )
 
   const queueStats = {
-    pending: queue.filter(item => item.status === 'processing').length,
-    inProgress: queue.filter(item => item.status === 'under_review').length,
-    needsAttention: queue.filter(item => item.status === 'needs_review').length,
-    highPriority: queue.filter(item => getPriorityLevel(item.priorityScoreNormalized) === 'high').length,
+    pending: queue.filter((item) => item.status === 'processing').length,
+    inProgress: queue.filter((item) => item.status === 'under_review').length,
+    needsAttention: queue.filter((item) => item.status === 'needs_review').length,
+    highPriority: queue.filter((item) => getPriorityLevel(item.priorityScoreNormalized) === 'high').length,
   }
 
   if (loading) {
@@ -148,7 +160,6 @@ export function VerificationPage() {
 
   return (
     <div className="p-8">
-      {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -170,7 +181,6 @@ export function VerificationPage() {
         </div>
       </motion.div>
 
-      {/* Status Cards */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -188,7 +198,7 @@ export function VerificationPage() {
             </div>
           </div>
         </div>
-        
+
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <div className="flex items-center">
             <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
@@ -200,7 +210,7 @@ export function VerificationPage() {
             </div>
           </div>
         </div>
-        
+
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <div className="flex items-center">
             <div className="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center">
@@ -212,7 +222,7 @@ export function VerificationPage() {
             </div>
           </div>
         </div>
-        
+
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <div className="flex items-center">
             <div className="w-12 h-12 bg-purple-100 rounded-xl flex items-center justify-center">
@@ -226,7 +236,6 @@ export function VerificationPage() {
         </div>
       </motion.div>
 
-      {/* Filters */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -245,7 +254,7 @@ export function VerificationPage() {
                 className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
               />
             </div>
-            
+
             <div className="relative">
               <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
               <select
@@ -260,7 +269,7 @@ export function VerificationPage() {
               </select>
               <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
             </div>
-            
+
             <div className="relative">
               <Zap className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
               <select
@@ -298,7 +307,6 @@ export function VerificationPage() {
         </SectionCard>
       </motion.div>
 
-      {/* Queue Items */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -315,14 +323,18 @@ export function VerificationPage() {
           ) : filteredQueue.length === 0 ? (
             <EmptyState
               title="Queue is empty"
-              description={queue.length === 0 ? "No items in verification queue" : "No items match your current filters"}
+              description={
+                queue.length === 0
+                  ? 'No items in verification queue'
+                  : 'No items match your current filters'
+              }
             />
           ) : (
             <div className="space-y-3">
               {filteredQueue.map((item, index) => {
                 const priorityLevel = getPriorityLevel(item.priorityScoreNormalized)
                 const riskLevel = item.riskLevel?.toLowerCase() || 'low'
-                
+
                 return (
                   <motion.div
                     key={item.id}
@@ -346,7 +358,7 @@ export function VerificationPage() {
                             {riskLevel.charAt(0).toUpperCase() + riskLevel.slice(1)} Risk
                           </span>
                         </div>
-                        
+
                         <div className="text-sm text-gray-600 space-y-1">
                           <div>
                             <span className="font-medium">Applicant:</span> {item.displayApplicantName || 'Unknown'}
@@ -359,7 +371,7 @@ export function VerificationPage() {
                           </div>
                         </div>
                       </div>
-                      
+
                       <div className="flex items-center gap-3">
                         {item.priorityScoreNormalized && (
                           <div className="text-right">
