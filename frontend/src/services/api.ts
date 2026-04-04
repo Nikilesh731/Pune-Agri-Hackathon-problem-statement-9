@@ -3,7 +3,12 @@
  * Purpose: Centralized HTTP client for backend communication
  */
 
-const RAW_API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const RAW_API_BASE_URL = import.meta.env.VITE_API_URL
+
+if (!RAW_API_BASE_URL) {
+  throw new Error('Missing VITE_API_URL')
+}
+
 const API_BASE_URL = RAW_API_BASE_URL.endsWith('/api')
   ? RAW_API_BASE_URL
   : `${RAW_API_BASE_URL}/api`
@@ -23,16 +28,18 @@ export class ApiClient {
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`
 
+    const isFormData = data instanceof FormData
+
     const config: RequestInit = {
       method,
       headers: {
-        'Content-Type': 'application/json',
+        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
         ...headers,
       },
     }
 
-    if (data) {
-      config.body = JSON.stringify(data)
+    if (data !== undefined && data !== null) {
+      config.body = isFormData ? data : JSON.stringify(data)
     }
 
     try {
@@ -61,20 +68,20 @@ export class ApiClient {
     return this.request<T>('GET', endpoint, undefined, headers)
   }
 
-  async post<T>(endpoint: string, data: any): Promise<T> {
-    return this.request<T>('POST', endpoint, data)
+  async post<T>(endpoint: string, data: any, headers?: Record<string, string>): Promise<T> {
+    return this.request<T>('POST', endpoint, data, headers)
   }
 
-  async put<T>(endpoint: string, data: any): Promise<T> {
-    return this.request<T>('PUT', endpoint, data)
+  async put<T>(endpoint: string, data: any, headers?: Record<string, string>): Promise<T> {
+    return this.request<T>('PUT', endpoint, data, headers)
   }
 
-  async patch<T>(endpoint: string, data: any): Promise<T> {
-    return this.request<T>('PATCH', endpoint, data)
+  async patch<T>(endpoint: string, data: any, headers?: Record<string, string>): Promise<T> {
+    return this.request<T>('PATCH', endpoint, data, headers)
   }
 
-  async delete<T>(endpoint: string): Promise<T> {
-    return this.request<T>('DELETE', endpoint)
+  async delete<T>(endpoint: string, headers?: Record<string, string>): Promise<T> {
+    return this.request<T>('DELETE', endpoint, undefined, headers)
   }
 }
 

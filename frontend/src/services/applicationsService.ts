@@ -5,8 +5,6 @@
 
 import { apiClient } from './api'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
-
 export interface Application {
   id: string
   applicantId: string
@@ -113,11 +111,9 @@ export interface ExtractedData {
     reasoning?: string[]
   }
   canonical?: any
-
   missingFields?: string[]
   extractionConfidence?: number
   village?: string
-
   [key: string]: any
 }
 
@@ -170,11 +166,7 @@ class ApplicationsService {
   }
 
   async createApplication(data: CreateApplicationInput): Promise<Application> {
-    try {
-      return await apiClient.post<Application>(this.endpoint, data)
-    } catch (error: any) {
-      throw error.response?.data || error
-    }
+    return apiClient.post<Application>(this.endpoint, data)
   }
 
   async updateApplication(id: string, data: Partial<Application>): Promise<Application> {
@@ -228,22 +220,7 @@ class ApplicationsService {
     const formData = new FormData()
     formData.append('file', file)
 
-    const response = await fetch(`${API_BASE_URL}/api${this.endpoint}/with-file`, {
-      method: 'POST',
-      body: formData,
-    })
-
-    const data = await response.json()
-
-    if (!response.ok) {
-      if (response.status === 409) {
-        return data
-      }
-      const errorText = data.message || data.error || 'Upload failed'
-      throw new Error(`HTTP ${response.status}: ${errorText}`)
-    }
-
-    return data
+    return apiClient.post(`${this.endpoint}/with-file`, formData)
   }
 }
 
