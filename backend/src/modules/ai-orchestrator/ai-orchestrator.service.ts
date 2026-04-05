@@ -299,7 +299,11 @@ class AIOrchestratorService {
         
         console.log('[AI] Payload:', payload);
         
+        const endpoint = aiOrchestratorRepository['getServiceEndpoint']('document-processing');
+        console.log('[AI] calling document-processing endpoint:', endpoint);
         documentProcessingResult = await aiOrchestratorRepository.callAIService('document-processing', payload)
+        
+        console.log('[AI DEBUG] document-processing raw response:', JSON.stringify(documentProcessingResult, null, 2));
         
       } catch (aiServiceError) {
         console.error('[AI] document-processing failed:', aiServiceError instanceof Error ? aiServiceError.message : aiServiceError);
@@ -319,108 +323,35 @@ class AIOrchestratorService {
       }
       
       // STEP 2: BUILD AND PRESERVE EXTRACTED DATA IMMEDIATELY AFTER DOCUMENT-PROCESSING
-      if (documentProcessingResult.success && documentProcessingResult.data) {
-        console.log('[AI] document-processing success');
-        
-        try {
-          // USE THE FROZEN AI RESPONSE CONTRACT
-          const payload = documentProcessingResult.data || {};
-          
-          // Extract from FROZEN CONTRACT structure only
-          const structured_data = payload?.structured_data || {};
-          const extracted_fields = payload?.extracted_fields || {};
-          const missing_fields = payload?.missing_fields || [];
-          const confidence = payload?.confidence || payload?.decision_support?.confidence || 0;
-          const reasoning = payload?.reasoning || [];
-          const classification_confidence = payload?.classification_confidence || 0;
-          const classification_reasoning = payload?.classification_reasoning || {};
-          const risk_flags = payload?.risk_flags || [];
-          const decision_support = payload?.decision_support || {};
-          
-          // CLEAN NULL VALUES FROM STRUCTURED_DATA
-          const cleanedStructuredData = JSON.parse(JSON.stringify(structured_data, (key, value) => {
-            if (value === null || value === undefined) return '';
-            return value;
-          }));
-          
-          // Normalize to canonical schema using frozen contract
-          const canonicalData = this.normalizeToCanonicalSchema(documentProcessingResult.data, input.fileName);
-          
-          // BUILD FINAL EXTRACTED DATA FROM FROZEN CONTRACT - AUTHORITATIVE
-          results.extractedData = {
-            // Frozen contract fields - authoritative structure
-            document_type: payload?.document_type || structured_data?.document_type,
-            structured_data: structured_data,
-            extracted_fields: extracted_fields,
-            missing_fields: missing_fields,
-            confidence: confidence,
-            reasoning: reasoning,
-            classification_confidence: classification_confidence,
-            classification_reasoning: classification_reasoning,
-            risk_flags: risk_flags,
-            decision_support: decision_support,
-            canonical: canonicalData,
-            
-            // Minimal compatibility fields derived from structured_data only
-            farmer_name: cleanedStructuredData.farmer_name,
-            aadhaar_number: cleanedStructuredData.aadhaar_number,
-            land_size: cleanedStructuredData.land_size,
-            scheme_name: cleanedStructuredData.scheme_name,
-            location: cleanedStructuredData.location,
-            requested_amount: cleanedStructuredData.requested_amount,
-            missingFields: missing_fields, // Map frozen contract to legacy name
-            extractionConfidence: payload?.confidence || payload?.decision_support?.confidence || 0 // Map frozen contract to legacy name with fallback
-          };
-          
-          // VALIDITY CHECK: Is this a real extraction result?
-          hasValidExtraction = this.hasValidExtractedData(results.extractedData);
-          
-          if (hasValidExtraction) {
-            console.log('[AI] extractedData valid - preservation successful');
-          } else {
-            console.log('[AI] extractedData invalid - using fallback');
-            results.extractedData = {
-              document_type: 'unknown',
-              structured_data: {},
-              extracted_fields: {},
-              missing_fields: ['Document processing returned invalid data'],
-              confidence: 0,
-              reasoning: ['Document processing returned invalid data'],
-              classification_confidence: 0,
-              classification_reasoning: {},
-              risk_flags: [],
-              decision_support: {},
-              canonical: null
-            };
-          }
-          
-        } catch (extractionError) {
-          console.error('[AI] data extraction failed:', extractionError instanceof Error ? extractionError.message : extractionError);
-          hasValidExtraction = false;
-          results.extractedData = {
-            document_type: 'unknown',
-            structured_data: {},
-            extracted_fields: {},
-            missing_fields: ['Data extraction failed'],
-            confidence: 0,
-            reasoning: ['Data extraction failed'],
-            classification_confidence: 0,
-            classification_reasoning: {},
-            risk_flags: [],
-            decision_support: {},
-            canonical: null
-          };
-        }
+      
+      // Helper function to validate extraction
+      const isValidExtraction = (data: any): boolean => {
+        return (
+          data &&
+          (
+            (data.document_type && data.document_type !== "unknown") ||
+            (data.structured_data && Object.keys(data.structured_data).length > 0) ||
+            (data.extracted_fields && Object.keys(data.extracted_fields).length > 0) ||
+            (data.canonical && Object.keys(data.canonical).length > 0)
+          )
+        )
+      };
+      
+      // Store raw response immediately and validate
+      if (documentProcessingResult.success && isValidExtraction(documentProcessingResult.data)) {
+        results.extractedData = documentProcessingResult.data;
+        console.log('[AI] VALID extraction detected → preserving');
+        hasValidExtraction = true;
       } else {
-        console.log('[AI] document-processing returned no data or failed');
+        console.warn('[AI] INVALID extraction result');
         hasValidExtraction = false;
         results.extractedData = {
           document_type: 'unknown',
           structured_data: {},
           extracted_fields: {},
-          missing_fields: ['Document processing failed'],
+          missing_fields: ['Document processing returned invalid data'],
           confidence: 0,
-          reasoning: ['Document processing failed'],
+          reasoning: ['Document processing returned invalid data'],
           classification_confidence: 0,
           classification_reasoning: {},
           risk_flags: [],
@@ -551,6 +482,19 @@ class AIOrchestratorService {
       }
       
     } catch (error) {
+      // If we have valid extraction data, preserve it even if downstream services failed
+      if (results.extractedData && hasValidExtraction) {
+        console.warn('[AI] downstream failure, but extraction preserved');
+        return {
+          success: true,
+          data: results,
+          processingTime: Date.now() - startTime,
+          requestId,
+          confidence: results.extractedData?.confidence || results.extractedData?.decision_support?.confidence || 0,
+          timestamp: new Date()
+        };
+      }
+      
       return {
         success: false,
         error: error instanceof Error ? error.message : 'AI processing failed',

@@ -65,6 +65,11 @@ async def process_document_from_metadata(
         DocumentProcessingResult: Processing results
     """
     try:
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info("[DOC] metadata request received")
+        
         # Ensure options exists
         updated_options = request.options or {}
         

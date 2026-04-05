@@ -262,7 +262,8 @@ class DocumentProcessingService:
         import logging
         logger = logging.getLogger(__name__)
         
-        logger.info("[DOC] metadata processing started")
+        logger.info(f"[DOC] metadata request received: {request.processing_type}")
+        logger.info(f"[DOC] fileUrl received: {file_url}")
         
         # Validate request
         validation = self.validate_request(request)
@@ -301,6 +302,7 @@ class DocumentProcessingService:
                 
                 file_content = response.content
                 logger.info(f"[DOC] file fetch success, size: {len(file_content)} bytes")
+                logger.info(f"[DOC] extraction output: processing with workflow")
                 
                 # Process the downloaded file content
                 processing_result = self.processor.process_document_workflow(
@@ -333,7 +335,9 @@ class DocumentProcessingService:
         result = self._convert_to_result_format(processing_result)
         
         if result.success:
-            logger.info("[DOC] extraction success")
+            logger.info(f"[DOC] extraction success: {result.data is not None}")
+            if result.data:
+                logger.info(f"[DOC] extraction output keys: {list(result.data.keys()) if isinstance(result.data, dict) else 'non-dict'}")
         else:
             logger.error(f"[DOC] extraction failed: {result.error_message}")
         
