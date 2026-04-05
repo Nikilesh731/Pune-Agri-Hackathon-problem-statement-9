@@ -30,8 +30,8 @@ function mapAiResultToApplicationStatus(
   const highFraudRisk = fraudRiskScore > 0.7;
   const hasHighRisk = highFraudRisk || riskFlags.some((f: any) => (f?.severity || '').toString().toLowerCase() === 'high');
 
-  // High priority ML tagging
-  const highPriorityReview = mlQueue.toUpperCase() === 'HIGH_PRIORITY';
+  // High priority ML tagging - FIXED: Check for VERIFICATION_QUEUE
+  const needsVerificationQueue = mlQueue.toUpperCase() === 'VERIFICATION_QUEUE';
 
   // Resolve document type (best-effort)
   const rawDocType = (resolvedExtractedData?.canonical?.document_type || resolvedExtractedData?.document_type || '').toString().toLowerCase().trim();
@@ -71,7 +71,7 @@ function mapAiResultToApplicationStatus(
   const needsManualReview = ['review', 'manual_review', 'reject'].includes(aiDecision);
 
   // Routing rule: only truly problematic/high-risk/manual cases go to verification (UNDER_REVIEW)
-  if (hasCriticalMissing || hasHighRisk || needsManualReview || highPriorityReview) {
+  if (hasCriticalMissing || hasHighRisk || needsManualReview || needsVerificationQueue) {
     return 'UNDER_REVIEW';
   }
 
@@ -1057,10 +1057,10 @@ class ApplicationsService {
     if (!data) return null
 
     return {
-      name: data.farmer_name,
+      name: data.farmer_name || data.applicant_name,
       aadhaar_number: data.aadhaar_number,
-      mobile_number: data.phone_number,
-      address: data.location,
+      mobile_number: data.phone_number || data.mobile_number,
+      address: data.location || data.address,
       village: data.village,
       district: data.district,
       state: data.state

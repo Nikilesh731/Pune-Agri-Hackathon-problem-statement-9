@@ -6,7 +6,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { applicationsService } from '../services/applicationsService'
-import { mapApplicationsToList } from '../utils/applicationDetailMapper'
+import { mapApplicationsToList, normalizePriorityScore } from '../utils/applicationDetailMapper'
 import { PageHeader } from '../components/ui/PageHeader'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { LoadingState } from '../components/ui/LoadingState'
@@ -380,7 +380,7 @@ export function ApplicationsPage() {
                             </span>
                             {application.extractedData?.ml_insights?.priority_score && (
                               <span className="text-xs text-gray-500">
-                                {Math.round(application.extractedData.ml_insights.priority_score * 100)}%
+                                {normalizePriorityScore(application.extractedData.ml_insights.priority_score)}%
                               </span>
                             )}
                           </div>

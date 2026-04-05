@@ -104,9 +104,9 @@ export function ApplicationSections({ application }: ApplicationSectionsProps) {
                 <div className="text-xs text-gray-600">Completeness</div>
               </div>
             )}
-            {normalizedData.priorityScore !== undefined && (
+            {normalizedData.mlInsights?.priority_score !== undefined && (
               <div className="text-center p-3 bg-white rounded-lg border">
-                <div className="text-2xl font-bold text-gray-900">{normalizePriorityScore(normalizedData.priorityScore)}%</div>
+                <div className="text-2xl font-bold text-gray-900">{normalizePriorityScore(normalizedData.mlInsights.priority_score)}%</div>
                 <div className="text-xs text-gray-600">Priority</div>
               </div>
             )}
