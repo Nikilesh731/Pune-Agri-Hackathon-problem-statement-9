@@ -301,16 +301,20 @@ class AIOrchestratorService {
       // STEP 3: AI SERVICE PROCESSING
       let documentProcessingResult: any;
       try {
-        documentProcessingResult = await aiOrchestratorRepository.callAIService('document-processing', {
-          processing_type: 'extract_structured',
+        // Use correct payload format for metadata processing
+        const payload = {
+          processing_type: "full_process",
           options: {
-            fileName: input.fileName,
-            fileType: input.fileType,
             fileUrl: input.fileUrl,
-            ocr_text: ocrText
-          },
-          extract_metadata: true
-        }, '/process-from-metadata')
+            filename: input.fileName,
+            fileType: input.fileType
+          }
+        };
+        
+        console.log("[AI] Using metadata processing route");
+        console.log("[AI] Payload:", payload);
+        
+        documentProcessingResult = await aiOrchestratorRepository.callAIService('document-processing', payload)
         
       } catch (aiServiceError) {
         console.error('[AI SERVICE] Call failed:', aiServiceError instanceof Error ? aiServiceError.message : aiServiceError);
