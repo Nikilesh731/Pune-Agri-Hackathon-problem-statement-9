@@ -9,6 +9,21 @@ import { aiOrchestratorService } from './ai-orchestrator.service'
 class AIOrchestratorController {
   processDocument = asyncHandler(async (req: Request, res: Response) => {
     const { fileUrl, fileName, fileType } = req.body
+    
+    // HARD GUARD: Validate fileUrl before AI processing
+    if (!fileUrl || typeof fileUrl !== "string" || !fileUrl.trim()) {
+      console.warn("[AI SKIP] Missing fileUrl in controller, skipping AI document-processing call");
+      return res.status(400).json({
+        success: false,
+        error: "Missing fileUrl for document processing"
+      });
+    }
+    
+    // DEBUG LOGGING: Log AI call details
+    console.log("[AI CALL] controller fileUrl:", fileUrl);
+    console.log("[AI CALL] controller fileName:", fileName);
+    console.log("[AI CALL] controller fileType:", fileType);
+    
     const result = await aiOrchestratorService.processDocument({ fileUrl, fileName, fileType })
     res.json(result)
   })

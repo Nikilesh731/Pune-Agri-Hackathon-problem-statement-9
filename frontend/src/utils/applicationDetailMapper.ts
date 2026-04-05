@@ -524,12 +524,12 @@ function getApplicantName(application: any): string {
  */
 function normalizePriorityScore(score: number): number {
   if (typeof score !== 'number' || isNaN(score)) return 0
-  // If score is already 0-100, return as-is
-  if (score <= 100) return Math.round(score)
-  // If score is 0-1, convert to 0-100
-  if (score <= 1) return Math.round(score * 100)
+  // If score is already in 0-100 range, return as-is
+  if (score >= 1 && score <= 100) return Math.round(score)
+  // If score is actually 0-1 decimal, convert to 0-100
+  if (score >= 0 && score < 1) return Math.round(score * 100)
   // Otherwise, cap at 100
-  return 100
+  return Math.min(100, Math.max(0, Math.round(score)))
 }
 
 /**
@@ -1023,7 +1023,7 @@ export function normalizeQueueItem(item: any): NormalizedQueueItem {
 
   // Priority score normalization rule
   let priorityScoreNormalized = item.priorityScore || 0
-  if (priorityScoreNormalized <= 1) {
+  if (priorityScoreNormalized >= 0 && priorityScoreNormalized < 1) {
     priorityScoreNormalized = priorityScoreNormalized * 100
   }
 

@@ -685,6 +685,18 @@ class ApplicationsService {
       const publicUrl = publicUrlData.publicUrl;
       console.log("[AI FILE URL] public url:", publicUrl);
       
+      // HARD GUARD: Validate fileUrl before AI processing
+      if (!publicUrl || typeof publicUrl !== "string" || !publicUrl.trim()) {
+        console.warn("[AI SKIP] Missing fileUrl, skipping AI document-processing call");
+        return;
+      }
+      
+      // DEBUG LOGGING: Log AI call details
+      console.log("[AI CALL] applicationId:", applicationId);
+      console.log("[AI CALL] fileUrl:", publicUrl);
+      console.log("[AI CALL] fileName:", application.fileName);
+      console.log("[AI CALL] fileType:", application.fileType);
+      
       // Call AI orchestrator with public URL
       const aiResponse = await aiOrchestratorService.processDocument({
         fileUrl: publicUrl,
@@ -756,12 +768,63 @@ class ApplicationsService {
         }
       }
 
-      // Update application with results
-      await this.updateApplication(applicationId, {
+      // Resolve farmer (same as sync path)
+      let farmerId = null;
+      const applicant = extractedData?.canonical?.applicant || this.mapStructuredToApplicant(extractedData?.structured_data);
+      
+      if (applicant && (applicant.name || applicant.aadhaar_number || applicant.mobile_number)) {
+        try {
+          const resolvedFarmer = await this.resolveFarmerFromCanonical(applicant);
+          if (resolvedFarmer) {
+            farmerId = resolvedFarmer.id;
+          }
+        } catch (error) {
+          console.error(`[ASYNC AI] Error resolving farmer:`, error);
+        }
+      }
+      
+      // Determine final status (same as sync path)
+      const finalStatus = mapAiResultToApplicationStatus(aiResponse, extractedData);
+      
+      // Update application with results (including farmerId)
+      const updateData: UpdateApplicationInput = {
         extractedData,
+        farmerId: farmerId || undefined,
+        status: finalStatus,
         aiProcessingStatus: extractedData.document_type === "unknown" ? "failed" : "completed",
-        aiProcessedAt: new Date()
-      });
+        aiProcessedAt: new Date(),
+        priorityScore: aiResponse.data?.priorityScore || 0,
+        fraudRiskScore: aiResponse.data?.fraudRiskScore || 0,
+        fraudFlags: aiResponse.data?.fraudFlags || [],
+        verificationRecommendation: aiResponse.data?.verificationRecommendation,
+        aiSummary: aiResponse.data?.aiSummary || aiResponse.data?.extractedData?.ai_summary || aiResponse.data?.extractedData?.summary || `Document processed as ${extractedData?.document_type || 'unknown'}. Review extracted fields for verification.`
+      };
+      
+      // Add normalized content hash if available from AI response
+      if (aiResponse.data?.rawExtractedText) {
+        const fingerprint = generateContentFingerprint(aiResponse.data.rawExtractedText);
+        if (fingerprint) {
+          (updateData as any).normalizedContentHash = fingerprint;
+        }
+      }
+      
+      await this.updateApplication(applicationId, updateData);
+      
+      // Resolve case if needed using shared resolved document type (same as sync path)
+      if (farmerId) {
+        try {
+          const resolvedDocumentType = this.resolveActualDocumentType({ extractedData, type: application.type });
+          if (resolvedDocumentType) {
+            await this.caseService.resolveCase({
+              applicationId,
+              farmerId,
+              documentType: resolvedDocumentType
+            });
+          }
+        } catch (caseError) {
+          console.error(`[ASYNC AI] Error resolving case:`, caseError);
+        }
+      }
       
       console.log("[AI] Completed:", applicationId);
       
@@ -844,6 +907,18 @@ class ApplicationsService {
     
     const publicUrl = publicUrlData.publicUrl;
     console.log("[AI FILE URL] public url:", publicUrl);
+    
+    // HARD GUARD: Validate fileUrl before AI processing
+    if (!publicUrl || typeof publicUrl !== "string" || !publicUrl.trim()) {
+      console.warn("[AI SKIP] Missing fileUrl, skipping AI document-processing call");
+      throw new Error('No file URL found for processing');
+    }
+    
+    // DEBUG LOGGING: Log AI call details
+    console.log("[AI CALL] applicationId:", applicationId);
+    console.log("[AI CALL] fileUrl:", publicUrl);
+    console.log("[AI CALL] fileName:", application.fileName);
+    console.log("[AI CALL] fileType:", application.fileType);
     
     // Call AI orchestrator with public URL
     const aiPromise = aiOrchestratorService.processDocument({

@@ -18,6 +18,19 @@ class AIOrchestratorService {
     const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     const results: any = {}
 
+    // AI ORCHESTRATOR SAFETY GUARD: Prevent calls with missing fileUrl
+    if (!input?.fileUrl || !String(input.fileUrl).trim()) {
+      console.warn("[AI SKIP] Missing fileUrl in ai-orchestrator, returning early");
+      return {
+        success: false,
+        error: "Missing fileUrl for document processing",
+        data: null,
+        processingTime: 0,
+        requestId,
+        timestamp: new Date()
+      };
+    }
+
     try {
       console.log('[AI] document-processing started')
 
@@ -128,8 +141,20 @@ class AIOrchestratorService {
 
         if (priorityResult.success) {
           results.priorityScore = (priorityResult.data?.priority_score ?? 0.5) * 100
+          // Determine queue based on priority score
+          const priorityScore = (priorityResult.data?.priority_score ?? 0.5) * 100
+          results.ml_insights = {
+            queue: priorityScore > 80 ? 'HIGH_PRIORITY' : priorityScore > 60 ? 'NORMAL' : 'LOW',
+            priority_score: priorityScore,
+            risk_level: results.fraudRiskScore > 0.7 ? 'HIGH' : results.fraudRiskScore > 0.4 ? 'MEDIUM' : 'LOW'
+          }
         } else {
           results.priorityScore = 50
+          results.ml_insights = {
+            queue: 'NORMAL',
+            priority_score: 50,
+            risk_level: 'MEDIUM'
+          }
         }
       } catch (priorityError) {
         console.warn(
@@ -137,6 +162,11 @@ class AIOrchestratorService {
           priorityError instanceof Error ? priorityError.message : priorityError
         )
         results.priorityScore = 50
+        results.ml_insights = {
+          queue: 'NORMAL',
+          priority_score: 50,
+          risk_level: 'MEDIUM'
+        }
       }
 
       // Optional: Fraud detection
