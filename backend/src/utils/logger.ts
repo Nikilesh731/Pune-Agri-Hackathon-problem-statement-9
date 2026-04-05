@@ -6,7 +6,7 @@ import winston from 'winston'
 import { config } from '../config/config'
 
 const logger = winston.createLogger({
-  level: config.nodeEnv === 'production' ? 'info' : 'debug',
+  level: config.nodeEnv === 'development' ? 'info' : 'debug',
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.errors({ stack: true }),

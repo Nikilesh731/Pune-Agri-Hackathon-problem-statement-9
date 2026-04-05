@@ -13,16 +13,16 @@ declare global {
 
 // Create a singleton Prisma client
 const prisma = globalThis.__prisma || new PrismaClient({
-  log: process.env.NODE_ENV === 'production' ? 
+  log: process.env.NODE_ENV === 'development' ? 
     ['query', 'info', 'warn', 'error'] : 
     ['error'],
   errorFormat: 'pretty',
 })
 
 // In development, save the client instance to global to avoid hot-reload issues
-if (process.env.NODE_ENV === 'production') {
+if (process.env.NODE_ENV === 'development') {
   globalThis.__prisma = prisma
-  console.log('[Prisma] Production mode: singleton client cached in global')
+  console.log('[Prisma] Development mode: singleton client cached in global')
 }
 
 /**

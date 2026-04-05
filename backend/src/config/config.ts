@@ -20,7 +20,7 @@ interface Config {
 
 export const config: Config = {
   port: parseInt(process.env.PORT || '3001', 10),
-  nodeEnv: process.env.NODE_ENV || 'production',
+  nodeEnv: process.env.NODE_ENV || 'development',
   corsOrigin: process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(',')
         .map(origin => origin.trim())
@@ -37,7 +37,7 @@ export const config: Config = {
   bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS || '12', 10),
   databaseUrl: process.env.DATABASE_URL || '',
   directUrl: process.env.DIRECT_URL || '',
-  aiServiceUrl: process.env.AI_SERVICE_URL || 'http://localhost:8000',
+  aiServiceUrl: process.env.AI_SERVICE_URL,
 }
 
 // Debug log to verify CORS origins
