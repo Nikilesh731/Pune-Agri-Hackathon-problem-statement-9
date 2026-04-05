@@ -263,7 +263,17 @@ class DocumentProcessingService:
         logger = logging.getLogger(__name__)
         
         logger.info(f"[DOC] metadata request received: {request.processing_type}")
+        
+        # Extract file URL from options for metadata processing
+        options = request.options or {}
+        file_url = options.get("fileUrl") or options.get("file_url")
+        filename = options.get("filename") or options.get("fileName", "uploaded_document")
+        
+        # Add required debug log for fileUrl receipt
+        print(f"[DOC] received fileUrl: {file_url}")
         logger.info(f"[DOC] fileUrl received: {file_url}")
+        
+        logger.info(f"[DOC] file fetch started for {filename}")
         
         # Validate request
         validation = self.validate_request(request)
@@ -280,13 +290,6 @@ class DocumentProcessingService:
                 error_message="; ".join(validation["errors"])
             )
         
-        # Extract file URL from options for metadata processing
-        options = request.options or {}
-        file_url = options.get("fileUrl") or options.get("file_url")
-        filename = options.get("filename") or options.get("fileName", "uploaded_document")
-        
-        logger.info(f"[DOC] file fetch started for {filename}")
-        
         # Process the document - if we have fileUrl, fetch and process the file
         if file_url:
             try:
@@ -297,6 +300,7 @@ class DocumentProcessingService:
                 
                 # Download file from URL
                 logger.info(f"[DOC] downloading file from {file_url}")
+                print("[DOC] downloading file...")
                 response = requests.get(file_url, timeout=30)
                 response.raise_for_status()
                 
@@ -308,6 +312,39 @@ class DocumentProcessingService:
                 processing_result = self.processor.process_document_workflow(
                     file_content, filename, request.processing_type, options
                 )
+                
+                # Add required debug log for extraction result
+                print(f"[DOC] extraction result: {processing_result}")
+                logger.info(f"[DOC] extraction result: {processing_result}")
+                
+                # Ensure extraction result is not empty and return explicit error if it fails
+                if not processing_result or not processing_result.get("data"):
+                    logger.error("[DOC] extraction returned empty result")
+                    return DocumentProcessingResult(
+                        request_id=str(uuid.uuid4()),
+                        success=False,
+                        processing_time_ms=0,
+                        processing_type=request.processing_type,
+                        filename=filename,
+                        data=None,
+                        metadata={},
+                        error_message="Document extraction returned empty result - OCR text may be empty or handler failed"
+                    )
+                
+                # Check if OCR text is empty (this is often the root cause)
+                extracted_data = processing_result.get("data", {})
+                if extracted_data.get("document_type") == "unknown" and not extracted_data.get("structured_data") and not extracted_data.get("extracted_fields"):
+                    logger.error("[DOC] extraction failed - OCR text may be empty or unreadable")
+                    return DocumentProcessingResult(
+                        request_id=str(uuid.uuid4()),
+                        success=False,
+                        processing_time_ms=0,
+                        processing_type=request.processing_type,
+                        filename=filename,
+                        data=None,
+                        metadata={},
+                        error_message="Document extraction failed - OCR text may be empty or unreadable"
+                    )
                 
             except Exception as fetch_error:
                 logger.error(f"[DOC] file fetch failed: {fetch_error}")

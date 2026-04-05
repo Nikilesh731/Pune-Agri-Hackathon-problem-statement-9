@@ -68,6 +68,8 @@ async def process_document_from_metadata(
         import logging
         logger = logging.getLogger(__name__)
         
+        # Add required debug log
+        print("[DOC] process-from-metadata endpoint hit")
         logger.info("[DOC] metadata request received")
         
         # Ensure options exists

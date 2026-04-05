@@ -287,6 +287,11 @@ class AIOrchestratorService {
       
       let documentProcessingResult: any;
       try {
+        // Add required debug logs before calling document-processing
+        console.log("[AI DEBUG] calling document-processing");
+        console.log("[AI DEBUG] fileUrl:", input.fileUrl);
+        console.log("[AI DEBUG] filename:", input.fileName);
+        
         // Use correct payload format for metadata processing
         const payload = {
           processing_type: "full_process",
@@ -303,7 +308,8 @@ class AIOrchestratorService {
         console.log('[AI] calling document-processing endpoint:', endpoint);
         documentProcessingResult = await aiOrchestratorRepository.callAIService('document-processing', payload)
         
-        console.log('[AI DEBUG] document-processing raw response:', JSON.stringify(documentProcessingResult, null, 2));
+        // Add required debug log after response
+        console.log("[AI DEBUG] document-processing response:", JSON.stringify(documentProcessingResult));
         
       } catch (aiServiceError) {
         console.error('[AI] document-processing failed:', aiServiceError instanceof Error ? aiServiceError.message : aiServiceError);
@@ -324,26 +330,40 @@ class AIOrchestratorService {
       
       // STEP 2: BUILD AND PRESERVE EXTRACTED DATA IMMEDIATELY AFTER DOCUMENT-PROCESSING
       
+      // Add required response validation
+      const documentResult = documentProcessingResult;
+      if (!documentResult) {
+        console.error("[AI ERROR] empty document-processing response");
+      }
+      
+      // Set results.extractedData BEFORE ANY OTHER SERVICE CALL
+      results.extractedData = documentResult;
+      
       // Helper function to validate extraction
-      const isValidExtraction = (data: any): boolean => {
-        return (
-          data &&
+      function isValidExtraction(data: any): boolean {
+        return data &&
           (
-            (data.document_type && data.document_type !== "unknown") ||
-            (data.structured_data && Object.keys(data.structured_data).length > 0) ||
-            (data.extracted_fields && Object.keys(data.extracted_fields).length > 0) ||
-            (data.canonical && Object.keys(data.canonical).length > 0)
+            data.document_type !== "unknown" ||
+            Object.keys(data.structured_data || {}).length > 0 ||
+            Object.keys(data.extracted_fields || {}).length > 0
           )
-        )
-      };
+      }
       
       // Store raw response immediately and validate
       if (documentProcessingResult.success && isValidExtraction(documentProcessingResult.data)) {
         results.extractedData = documentProcessingResult.data;
-        console.log('[AI] VALID extraction detected → preserving');
+        console.log('[AI] extraction SUCCESS');
         hasValidExtraction = true;
+        return {
+          success: true,
+          data: results,
+          processingTime: Date.now() - startTime,
+          requestId,
+          confidence: results.extractedData?.confidence || results.extractedData?.decision_support?.confidence || 0,
+          timestamp: new Date()
+        };
       } else {
-        console.warn('[AI] INVALID extraction result');
+        console.warn('[AI] extraction FAILED');
         hasValidExtraction = false;
         results.extractedData = {
           document_type: 'unknown',
