@@ -339,45 +339,14 @@ class AIOrchestratorService {
       // Set results.extractedData BEFORE ANY OTHER SERVICE CALL
       results.extractedData = documentResult;
       
-      // Helper function to validate extraction
-      function isValidExtraction(data: any): boolean {
-        return data &&
-          (
-            data.document_type !== "unknown" ||
-            Object.keys(data.structured_data || {}).length > 0 ||
-            Object.keys(data.extracted_fields || {}).length > 0
-          )
-      }
-      
-      // Store raw response immediately and validate
-      if (documentProcessingResult.success && isValidExtraction(documentProcessingResult.data)) {
+      // Store raw response immediately
+      if (documentProcessingResult.success && documentProcessingResult.data) {
         results.extractedData = documentProcessingResult.data;
         console.log('[AI] extraction SUCCESS');
         hasValidExtraction = true;
-        return {
-          success: true,
-          data: results,
-          processingTime: Date.now() - startTime,
-          requestId,
-          confidence: results.extractedData?.confidence || results.extractedData?.decision_support?.confidence || 0,
-          timestamp: new Date()
-        };
       } else {
         console.warn('[AI] extraction FAILED');
         hasValidExtraction = false;
-        results.extractedData = {
-          document_type: 'unknown',
-          structured_data: {},
-          extracted_fields: {},
-          missing_fields: ['Document processing returned invalid data'],
-          confidence: 0,
-          reasoning: ['Document processing returned invalid data'],
-          classification_confidence: 0,
-          classification_reasoning: {},
-          risk_flags: [],
-          decision_support: {},
-          canonical: null
-        };
       }
       
       // STEP 3: OPTIONAL DOWNSTREAM SERVICES - ISOLATED FAILURES
@@ -485,8 +454,8 @@ class AIOrchestratorService {
       results.aiProcessedAt = new Date()
       results.aiProcessingStatus = 'completed'
       
-      // FINAL SUCCESS RULE: Return success only when document-processing succeeded and extractedData is valid
-      const overallSuccess = hasValidExtraction;
+      // FINAL SUCCESS RULE: Return success only when document-processing succeeded
+      const overallSuccess = documentProcessingResult.success;
       
       if (overallSuccess) {
         console.log('[AI] returning preserved extraction result');
