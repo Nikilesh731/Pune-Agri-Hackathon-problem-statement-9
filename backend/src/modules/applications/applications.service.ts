@@ -6,6 +6,7 @@ import { applicationsRepository } from './applications.repository'
 import { aiOrchestratorService } from '../ai-orchestrator/ai-orchestrator.service'
 import { Application, CreateApplicationInput, UpdateApplicationInput, ApplicationQuery, DuplicateCheckResult, CreateApplicationResponse, ApplicationVersionHistory } from './applications.types'
 import { CaseService } from '../cases/cases.service'
+import { supabase } from '../../config/supabase'
 
 // Status mapping helper for valid Prisma enum values
 // Part 9: Case-first workflow - documents go to case management first, not verification queue
@@ -673,9 +674,20 @@ class ApplicationsService {
         throw new Error('No file URL found for processing');
       }
       
-      // Call AI orchestrator
+      // Convert stored file path to public Supabase URL
+      const filePath = application.fileUrl;
+      console.log("[AI FILE URL] object path:", filePath);
+      
+      const { data: publicUrlData } = supabase.storage
+        .from('documents')
+        .getPublicUrl(filePath);
+      
+      const publicUrl = publicUrlData.publicUrl;
+      console.log("[AI FILE URL] public url:", publicUrl);
+      
+      // Call AI orchestrator with public URL
       const aiResponse = await aiOrchestratorService.processDocument({
-        fileUrl: application.fileUrl,
+        fileUrl: publicUrl,
         fileName: application.fileName,
         fileType: application.fileType
       });
@@ -822,9 +834,20 @@ class ApplicationsService {
       throw new Error('No file URL found for processing');
     }
     
-    // Call AI orchestrator
+    // Convert stored file path to public Supabase URL
+    const filePath = application.fileUrl;
+    console.log("[AI FILE URL] object path:", filePath);
+    
+    const { data: publicUrlData } = supabase.storage
+      .from('documents')
+      .getPublicUrl(filePath);
+    
+    const publicUrl = publicUrlData.publicUrl;
+    console.log("[AI FILE URL] public url:", publicUrl);
+    
+    // Call AI orchestrator with public URL
     const aiPromise = aiOrchestratorService.processDocument({
-      fileUrl: application.fileUrl,
+      fileUrl: publicUrl,
       fileName: application.fileName,
       fileType: application.fileType
     });
