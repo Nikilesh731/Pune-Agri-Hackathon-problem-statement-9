@@ -22,7 +22,7 @@ import { LoadingState } from '../components/ui/LoadingState'
 import { EmptyState } from '../components/ui/EmptyState'
 import { SectionCard } from '../components/ui/SectionCard'
 import { Button } from '../components/ui/Button'
-import { normalizeQueueItem, NormalizedQueueItem } from '../utils/applicationDetailMapper'
+import { normalizeQueueItem, normalizePriorityScore, NormalizedQueueItem } from '../utils/applicationDetailMapper'
 import { apiClient } from '../services/api'
 
 interface VerificationQueueResponse {
@@ -377,7 +377,7 @@ export function VerificationPage() {
                           <div className="text-right">
                             <div className="text-xs text-gray-500">Priority Score</div>
                             <div className="text-lg font-bold text-gray-900">
-                              {Math.round(item.priorityScoreNormalized)}%
+                              {normalizePriorityScore(item.priorityScoreNormalized)}%
                             </div>
                           </div>
                         )}

@@ -255,7 +255,7 @@ export function FarmerRecordsPage() {
                           <span className="font-medium">Aadhaar:</span> {farmer.aadhaarNumber || 'N/A'}
                         </div>
                         <div>
-                          <span className="font-medium">Mobile:</span> {farmer.mobileNumber || 'N/A'}
+                          <span className="font-medium">Mobile:</span> {farmer.mobileNumber || farmer.mobile_number || 'N/A'}
                         </div>
                         <div>
                           <span className="font-medium">Location:</span> {[farmer.village, farmer.district, farmer.state].filter(Boolean).join(', ') || 'N/A'}

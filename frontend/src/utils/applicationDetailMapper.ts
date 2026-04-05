@@ -525,13 +525,10 @@ function getApplicantName(application: any): string {
  * USAGE: `${normalizePriorityScore(priority_score)}%`
  */
 export function normalizePriorityScore(value: any): number {
-  const n = Number(value || 0)
-  if (!Number.isFinite(n)) return 0
-  
-  // If score is already in 0-100 range, return as-is
-  // If score is 0-1 decimal, convert to 0-100
-  // This prevents 60 -> 6000% bug
-  return n <= 1 ? Math.round(n * 100) : Math.round(n)
+  if (typeof value !== 'number' || isNaN(value)) return 0
+  if (value <= 1) return Math.round(value * 100)
+  if (value <= 100) return Math.round(value)
+  return 100
 }
 
 /**
@@ -616,7 +613,9 @@ export function normalizeApplicationData(application: Application): NormalizedAp
     const displayApplicantName = getApplicantName(application)
     const displayStatus = application.status || 'unknown'
     const displayDocumentType = getDocumentTypeLabel(documentType)
-    const priorityScoreNormalized = normalizePriorityScore(application.priorityScore || mlInsights.priority_score || 0)
+    const priorityScoreNormalized = normalizePriorityScore(
+      mlInsights.priority_score ?? predictions.priority_score ?? application.priorityScore ?? 0
+    )
     const riskLevel = normalizeRiskLevel(mlInsights.risk_level || predictions.risk_level || 'medium')
 
     return {
@@ -645,7 +644,7 @@ export function normalizeApplicationData(application: Application): NormalizedAp
       // TASK 4: FAIL-SAFE UI DATA - Always provide AI fields with safe defaults
       aiSummary: safeAiSummary,
       officerSummary: safeOfficerSummary,
-      priorityScore: application.priorityScore || 0,
+      priorityScore: priorityScoreNormalized,
       fraudRiskScore: application.fraudRiskScore || 0,
       verificationRecommendation: application.verificationRecommendation || safeDecisionSupport?.recommendation || "",
       aiProcessingStatus: application.aiProcessingStatus || "pending",

@@ -191,7 +191,7 @@ export function FarmerDetailPage() {
                 <label className="text-sm font-medium text-gray-500">Mobile Number</label>
                 <p className="text-base font-medium flex items-center gap-2">
                   <Phone className="w-4 h-4 text-gray-400" />
-                  {farmer.mobileNumber || 'N/A'}
+                  {farmer.mobileNumber || farmer.mobile_number || 'N/A'}
                 </p>
               </div>
               
