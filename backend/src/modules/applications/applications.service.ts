@@ -655,14 +655,9 @@ class ApplicationsService {
   }
 
   private async triggerAIProcessingAsync(applicationId: string): Promise<void> {
-    console.log(`[ASYNC AI] Starting background AI processing for application: ${applicationId}`);
+    console.log("[AI] Started:", applicationId);
     
     try {
-      // Mark as processing
-      await applicationsRepository.updateApplication(applicationId, {
-        aiProcessingStatus: 'processing'
-      });
-      
       // Get application details
       const application = await applicationsRepository.getApplicationById(applicationId);
       if (!application?.fileUrl) {
@@ -670,100 +665,33 @@ class ApplicationsService {
       }
       
       // Call AI orchestrator
-      const aiPromise = aiOrchestratorService.processDocument({
+      const aiResponse = await aiOrchestratorService.processDocument({
         fileUrl: application.fileUrl,
         fileName: application.fileName,
         fileType: application.fileType
       });
       
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('AI processing timeout')), 60000)
-      );
-      
-      const aiResponse = await Promise.race([aiPromise, timeoutPromise]) as any;
-      
       if (!aiResponse?.success) {
         throw new Error(aiResponse?.error || 'AI processing failed');
       }
       
-      // Extract data using strict contract resolution
-      const extractedData = this.resolveExtractedContractFromAiResponse(aiResponse) || {};
-      
-      // Resolve farmer
-      let farmerId = null;
-      const applicant = extractedData?.canonical?.applicant || this.mapStructuredToApplicant(extractedData?.structured_data);
-      
-      if (applicant && (applicant.name || applicant.aadhaar_number || applicant.mobile_number)) {
-        try {
-          const resolvedFarmer = await this.resolveFarmerFromCanonical(applicant);
-          if (resolvedFarmer) {
-            farmerId = resolvedFarmer.id;
-          }
-        } catch (error) {
-          console.error(`[ASYNC AI] Error resolving farmer:`, error);
-        }
-      }
-      
-      // Determine final status
-      const finalStatus = mapAiResultToApplicationStatus(aiResponse, extractedData);
+      // Extract data using SAFE resolver
+      const extractedContract = this.resolveExtractedContractFromAiResponse(aiResponse);
       
       // Update application with results
-      await applicationsRepository.updateApplication(applicationId, {
-        extractedData,
-        farmerId: farmerId || undefined,
-        status: finalStatus,
-        aiProcessingStatus: 'completed',
-        aiProcessedAt: new Date(),
-        priorityScore: aiResponse.data?.priorityScore || 0,
-        fraudRiskScore: aiResponse.data?.fraudRiskScore || 0,
-        fraudFlags: aiResponse.data?.fraudFlags || [],
-        verificationRecommendation: aiResponse.data?.verificationRecommendation,
-        aiSummary: aiResponse.data?.aiSummary || aiResponse.data?.extractedData?.ai_summary || aiResponse.data?.extractedData?.summary || `Document processed as ${extractedData?.document_type || 'unknown'}. Review extracted fields for verification.`
+      await this.updateApplication(applicationId, {
+        extractedData: extractedContract,
+        aiProcessingStatus: "completed",
+        aiProcessedAt: new Date()
       });
-
-      // Safety: also persist minimal AI result and completed status in case
-      // the upstream AI response used a different shape (e.g. .data vs .data.extractedData)
-      try {
-        const aiResult = aiResponse?.data?.extractedData || aiResponse?.data || extractedData;
-        if (aiResult) {
-          try { (application as any).extractedData = aiResult; (application as any).aiProcessingStatus = 'completed'; (application as any).updatedAt = new Date(); } catch (_) {}
-
-          await applicationsRepository.updateApplication(applicationId, {
-            extractedData: aiResult,
-            aiProcessingStatus: 'completed'
-          });
-        }
-      } catch (e) {
-        console.error('[ASYNC AI] Error persisting aiResult fallback:', e);
-      }
       
-      // Resolve case if needed using shared resolved document type
-      if (farmerId) {
-        try {
-          const resolvedDocumentType = this.resolveActualDocumentType({ extractedData, type: application.type });
-          if (resolvedDocumentType) {
-            await this.caseService.resolveCase({
-              applicationId,
-              farmerId,
-              documentType: resolvedDocumentType
-            });
-          }
-        } catch (caseError) {
-          console.error(`[ASYNC AI] Error resolving case:`, caseError);
-        }
-      }
-      
-      console.log(`[ASYNC AI] Completed processing for application: ${applicationId}`);
+      console.log("[AI] Completed:", applicationId);
       
     } catch (error) {
-      console.error(`[ASYNC AI] Error in processing:`, error);
+      console.error("[AI] Failed:", applicationId, error);
       
-      // Mark as failed
-      await applicationsRepository.updateApplication(applicationId, {
-        status: 'CASE_READY',
-        aiProcessingStatus: 'failed',
-        notes: error instanceof Error ? error.message : 'AI processing failed',
-        aiProcessedAt: new Date()
+      await this.updateApplication(applicationId, {
+        aiProcessingStatus: "failed"
       });
     }
   }
