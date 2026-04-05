@@ -19,8 +19,11 @@ class AIOrchestratorService {
     const results: any = {}
 
     // AI ORCHESTRATOR SAFETY GUARD: Prevent calls with missing fileUrl
+    // This is critical to prevent duplicate calls where first call succeeds with valid fileUrl
+    // and second call fails with fileUrl = null, overwriting the success
     if (!input?.fileUrl || !String(input.fileUrl).trim()) {
       console.warn("[AI SKIP] Missing fileUrl in ai-orchestrator, returning early");
+      console.warn("[AI SKIP] This prevents 'No OCR text available' errors from overwriting successful extraction");
       return {
         success: false,
         error: "Missing fileUrl for document processing",

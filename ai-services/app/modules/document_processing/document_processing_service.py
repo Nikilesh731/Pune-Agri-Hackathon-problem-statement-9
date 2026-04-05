@@ -269,6 +269,22 @@ class DocumentProcessingService:
         file_url = options.get("fileUrl") or options.get("file_url")
         filename = options.get("filename") or options.get("fileName", "uploaded_document")
         
+        # CRITICAL GUARD: Prevent processing with missing fileUrl
+        # This prevents duplicate calls where first call succeeds and second call with null fileUrl overwrites success
+        if not file_url or not str(file_url).strip():
+            logger.error("[DOC] Missing fileUrl in request, returning error")
+            print("[DOC] Missing fileUrl - this prevents overwriting successful extraction")
+            return DocumentProcessingResult(
+                request_id=str(uuid.uuid4()),
+                success=False,
+                processing_time_ms=0,
+                processing_type=request.processing_type,
+                filename=filename,
+                data=None,
+                metadata={},
+                error_message="Missing fileUrl for document processing"
+            )
+        
         # Add required debug log for fileUrl receipt
         print(f"[DOC] received fileUrl: {file_url}")
         logger.info(f"[DOC] fileUrl received: {file_url}")

@@ -492,20 +492,20 @@ function buildCanonicalExtractedSections(application: any) {
 
 /**
  * Helper function to get applicant display name with priority order
- * Part 10: Updated to use structured_data first from new pipeline
+ * FIXED: Use canonical.applicant.name as first priority to fix "Unknown Farmer" issue
  */
 function getApplicantName(application: any): string {
-  // 1. extractedData.structured_data.farmer_name (new pipeline - FIRST)
+  // 1. extractedData.canonical.applicant.name (FIXED: First priority for "Unknown Farmer" issue)
+  if (application.extractedData?.canonical?.applicant?.name) {
+    return application.extractedData.canonical.applicant.name
+  }
+  // 2. extractedData.structured_data.farmer_name (new pipeline)
   if (application.extractedData?.structured_data?.farmer_name) {
     return application.extractedData.structured_data.farmer_name
   }
-  // 2. extractedData.farmer_name (direct extraction)
+  // 3. extractedData.farmer_name (direct extraction)
   if (application.extractedData?.farmer_name) {
     return application.extractedData.farmer_name
-  }
-  // 3. extractedData.canonical.applicant.name (old format)
-  if (application.extractedData?.canonical?.applicant?.name) {
-    return application.extractedData.canonical.applicant.name
   }
   // 4. personalInfo.firstName + lastName
   if (application.personalInfo?.firstName && application.personalInfo?.lastName) {
@@ -521,15 +521,16 @@ function getApplicantName(application: any): string {
 
 /**
  * Helper function to normalize priority score to 0-100 range
+ * CRITICAL FIX: Prevents 4000% display when priority_score = 40
  */
-function normalizePriorityScore(score: number): number {
-  if (typeof score !== 'number' || isNaN(score)) return 0
+function normalizePriority(value: any): number {
+  const n = Number(value || 0)
+  if (!Number.isFinite(n)) return 0
+  
   // If score is already in 0-100 range, return as-is
-  if (score >= 1 && score <= 100) return Math.round(score)
-  // If score is actually 0-1 decimal, convert to 0-100
-  if (score >= 0 && score < 1) return Math.round(score * 100)
-  // Otherwise, cap at 100
-  return Math.min(100, Math.max(0, Math.round(score)))
+  // If score is 0-1 decimal, convert to 0-100
+  // This prevents 40 -> 4000% bug
+  return n <= 1 ? Math.round(n * 100) : Math.round(n)
 }
 
 /**
@@ -614,7 +615,7 @@ export function normalizeApplicationData(application: Application): NormalizedAp
     const displayApplicantName = getApplicantName(application)
     const displayStatus = application.status || 'unknown'
     const displayDocumentType = getDocumentTypeLabel(documentType)
-    const priorityScoreNormalized = normalizePriorityScore(application.priorityScore || mlInsights.priority_score || 0)
+    const priorityScoreNormalized = normalizePriority(application.priorityScore || mlInsights.priority_score || 0)
     const riskLevel = normalizeRiskLevel(mlInsights.risk_level || predictions.risk_level || 'medium')
 
     return {
@@ -1012,20 +1013,17 @@ export interface NormalizedQueueItem {
 }
 
 export function normalizeQueueItem(item: any): NormalizedQueueItem {
-  // Applicant name priority order
+  // Applicant name priority order - FIXED: Use canonical.applicant.name first
   const applicantName = 
     item.extractedData?.canonical?.applicant?.name ||
-    item.extractedData?.farmer_name ||
     item.extractedData?.structured_data?.farmer_name ||
+    item.extractedData?.farmer_name ||
     item.farmer?.name ||
     item.applicantId ||
     "Unknown Applicant"
 
-  // Priority score normalization rule
-  let priorityScoreNormalized = item.priorityScore || 0
-  if (priorityScoreNormalized >= 0 && priorityScoreNormalized < 1) {
-    priorityScoreNormalized = priorityScoreNormalized * 100
-  }
+  // Priority score normalization rule - FIXED to prevent 4000% bug
+  const priorityScoreNormalized = normalizePriority(item.priorityScore || 0)
 
   // Display document type
   const displayDocumentType = item.documentType?.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()) || 'Unknown'

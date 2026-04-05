@@ -671,7 +671,8 @@ class ApplicationsService {
       // Get application details
       const application = await applicationsRepository.getApplicationById(applicationId);
       if (!application?.fileUrl) {
-        throw new Error('No file URL found for processing');
+        console.warn("[AI SKIP] No fileUrl found for application, skipping AI processing");
+        return;
       }
       
       // Convert stored file path to public Supabase URL
@@ -685,9 +686,11 @@ class ApplicationsService {
       const publicUrl = publicUrlData.publicUrl;
       console.log("[AI FILE URL] public url:", publicUrl);
       
-      // HARD GUARD: Validate fileUrl before AI processing
+      // CRITICAL GUARD: Validate fileUrl before AI processing
+      // This prevents the duplicate call issue where fileUrl = null
       if (!publicUrl || typeof publicUrl !== "string" || !publicUrl.trim()) {
-        console.warn("[AI SKIP] Missing fileUrl, skipping AI document-processing call");
+        console.warn("[AI SKIP] Missing or invalid fileUrl, skipping AI document-processing call");
+        console.warn("[AI SKIP] This prevents 'No OCR text available' errors from overwriting success");
         return;
       }
       
@@ -831,61 +834,87 @@ class ApplicationsService {
     } catch (error) {
       console.error("[AI] Failed:", applicationId, error);
       
-      await this.updateApplication(applicationId, {
-        extractedData: {
-          document_type: "unknown",
-          structured_data: {},
-          extracted_fields: {},
-          missing_fields: [],
-          confidence: 0,
-          reasoning: ["AI processing failed"],
-          canonical: {
+      // CRITICAL PROTECTION: Check if we already have valid extractedData
+      // If so, DO NOT overwrite it with failure data
+      const existingApplication = await applicationsRepository.getApplicationById(applicationId);
+      const existingExtractedData = existingApplication?.extractedData;
+      
+      // Check if existing data is valid (has meaningful content)
+      const hasValidExistingData = existingExtractedData && (
+        (existingExtractedData.canonical && Object.keys(existingExtractedData.canonical).length > 0) ||
+        (existingExtractedData.structured_data && Object.keys(existingExtractedData.structured_data).length > 0) ||
+        (existingExtractedData.document_type && existingExtractedData.document_type !== "unknown")
+      );
+      
+      if (hasValidExistingData) {
+        console.warn("[AI PROTECTION] Valid extractedData exists, NOT overwriting with failure");
+        console.warn("[AI PROTECTION] This prevents successful extraction from being lost");
+        
+        // Only update status, not the extractedData
+        await this.updateApplication(applicationId, {
+          aiProcessingStatus: "failed",
+          aiProcessedAt: new Date()
+        });
+      } else {
+        console.log("[AI PROTECTION] No valid existing data, setting failure state");
+        
+        // Only set failure data if no valid data exists
+        await this.updateApplication(applicationId, {
+          extractedData: {
             document_type: "unknown",
-            document_category: "unknown",
-            applicant: {
-              name: "",
-              guardian_name: "",
-              aadhaar_number: "",
-              mobile_number: "",
-              address: "",
-              village: "",
-              district: "",
-              state: ""
-            },
-            agriculture: {
-              land_size: "",
-              land_unit: "",
-              survey_number: "",
-              crop_name: "",
-              season: "",
-              location: ""
-            },
-            request: {
-              scheme_name: "",
-              request_type: "",
-              requested_amount: "",
-              issue_summary: "",
-              claim_reason: ""
-            },
-            document_meta: {
-              document_date: "",
-              reference_number: "",
-              supporting_doc_type: "",
-              source_file_name: ""
-            },
-            verification: {
-              missing_fields: [],
-              field_confidences: {},
-              extraction_confidence: 0,
-              validation_errors: [],
-              recommendation: "",
-              reasoning: ["AI processing failed"]
+            structured_data: {},
+            extracted_fields: {},
+            missing_fields: [],
+            confidence: 0,
+            reasoning: ["AI processing failed"],
+            canonical: {
+              document_type: "unknown",
+              document_category: "unknown",
+              applicant: {
+                name: "",
+                guardian_name: "",
+                aadhaar_number: "",
+                mobile_number: "",
+                address: "",
+                village: "",
+                district: "",
+                state: ""
+              },
+              agriculture: {
+                land_size: "",
+                land_unit: "",
+                survey_number: "",
+                crop_name: "",
+                season: "",
+                location: ""
+              },
+              request: {
+                scheme_name: "",
+                request_type: "",
+                requested_amount: "",
+                issue_summary: "",
+                claim_reason: ""
+              },
+              document_meta: {
+                document_date: "",
+                reference_number: "",
+                supporting_doc_type: "",
+                source_file_name: ""
+              },
+              verification: {
+                missing_fields: [],
+                field_confidences: {},
+                extraction_confidence: 0,
+                validation_errors: [],
+                recommendation: "",
+                reasoning: ["AI processing failed"]
+              }
             }
-          }
-        },
-        aiProcessingStatus: "failed",
-        aiProcessedAt: new Date()
-      });
+          },
+          aiProcessingStatus: "failed",
+          aiProcessedAt: new Date()
+        });
+      }
     }
   }
 
