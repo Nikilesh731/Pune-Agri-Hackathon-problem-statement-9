@@ -687,10 +687,67 @@ class ApplicationsService {
       // Extract data using SAFE resolver
       const extractedContract = this.resolveExtractedContractFromAiResponse(aiResponse);
       
+      // Ensure extractedData is never null
+      let extractedData = extractedContract;
+      
+      if (!extractedData) {
+        extractedData = {
+          document_type: "unknown",
+          structured_data: {},
+          extracted_fields: {},
+          missing_fields: [],
+          confidence: 0,
+          reasoning: ["AI processing failed"],
+          canonical: {
+            document_type: "unknown",
+            document_category: "unknown",
+            applicant: {
+              name: "",
+              guardian_name: "",
+              aadhaar_number: "",
+              mobile_number: "",
+              address: "",
+              village: "",
+              district: "",
+              state: ""
+            },
+            agriculture: {
+              land_size: "",
+              land_unit: "",
+              survey_number: "",
+              crop_name: "",
+              season: "",
+              location: ""
+            },
+            request: {
+              scheme_name: "",
+              request_type: "",
+              requested_amount: "",
+              issue_summary: "",
+              claim_reason: ""
+            },
+            document_meta: {
+              document_date: "",
+              reference_number: "",
+              supporting_doc_type: "",
+              source_file_name: ""
+            },
+            verification: {
+              missing_fields: [],
+              field_confidences: {},
+              extraction_confidence: 0,
+              validation_errors: [],
+              recommendation: "",
+              reasoning: ["AI processing failed"]
+            }
+          }
+        }
+      }
+
       // Update application with results
       await this.updateApplication(applicationId, {
-        extractedData: extractedContract,
-        aiProcessingStatus: "completed",
+        extractedData,
+        aiProcessingStatus: extractedData.document_type === "unknown" ? "failed" : "completed",
         aiProcessedAt: new Date()
       });
       
@@ -700,7 +757,59 @@ class ApplicationsService {
       console.error("[AI] Failed:", applicationId, error);
       
       await this.updateApplication(applicationId, {
-        aiProcessingStatus: "failed"
+        extractedData: {
+          document_type: "unknown",
+          structured_data: {},
+          extracted_fields: {},
+          missing_fields: [],
+          confidence: 0,
+          reasoning: ["AI processing failed"],
+          canonical: {
+            document_type: "unknown",
+            document_category: "unknown",
+            applicant: {
+              name: "",
+              guardian_name: "",
+              aadhaar_number: "",
+              mobile_number: "",
+              address: "",
+              village: "",
+              district: "",
+              state: ""
+            },
+            agriculture: {
+              land_size: "",
+              land_unit: "",
+              survey_number: "",
+              crop_name: "",
+              season: "",
+              location: ""
+            },
+            request: {
+              scheme_name: "",
+              request_type: "",
+              requested_amount: "",
+              issue_summary: "",
+              claim_reason: ""
+            },
+            document_meta: {
+              document_date: "",
+              reference_number: "",
+              supporting_doc_type: "",
+              source_file_name: ""
+            },
+            verification: {
+              missing_fields: [],
+              field_confidences: {},
+              extraction_confidence: 0,
+              validation_errors: [],
+              recommendation: "",
+              reasoning: ["AI processing failed"]
+            }
+          }
+        },
+        aiProcessingStatus: "failed",
+        aiProcessedAt: new Date()
       });
     }
   }
