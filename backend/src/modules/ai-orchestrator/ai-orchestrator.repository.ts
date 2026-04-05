@@ -10,7 +10,7 @@ class AIOrchestratorRepository {
     const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     
     try {
-      // Get AI service endpoint from config (for now, use placeholder)
+      // Get AI service endpoint from config
       const endpoint = this.getServiceEndpoint(serviceType, endpointPath)
       
       // Debug logging before request
@@ -18,9 +18,9 @@ class AIOrchestratorRepository {
       console.log(`[AI REPOSITORY] Request payload:`, JSON.stringify(requestData, null, 2))
       console.log(`[AI REPOSITORY] Endpoint path: ${endpointPath || 'default'}`)
       
-      // Create timeout promise
+      // Create timeout promise - 25 second timeout for all services
       const timeoutPromise = new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('AI service timeout')), 25000) // 25 second timeout
+        setTimeout(() => reject(new Error(`AI service timeout after 25s for ${serviceType}`)), 25000)
       )
       
       // Make HTTP call to AI service
@@ -42,14 +42,19 @@ class AIOrchestratorRepository {
       if (!response.ok) {
         const errorBody = await response.text()
         console.error(`[AI REPOSITORY] ${serviceType} failed with status ${response.status}`)
-        console.error(`[AI REPOSITORY] Error response body:`, errorBody)
+        console.error(`[AI REPOSITORY] Service type: ${serviceType}`)
+        console.error(`[AI REPOSITORY] Endpoint URL: ${endpoint}`)
+        console.error(`[AI REPOSITORY] Status code: ${response.status}`)
+        console.error(`[AI REPOSITORY] Status text: ${response.statusText}`)
+        console.error(`[AI REPOSITORY] Response body:`, errorBody)
         console.error(`[AI REPOSITORY] Full error details:`, {
           status: response.status,
           statusText: response.statusText,
           url: endpoint,
-          body: errorBody
+          body: errorBody,
+          serviceType: serviceType
         })
-        throw new Error(`AI service responded with status: ${response.status} - ${errorBody}`)
+        throw new Error(`AI service ${serviceType} responded with status: ${response.status} - ${errorBody}`)
       }
       
       const responseData = await response.json() as any
@@ -71,11 +76,14 @@ class AIOrchestratorRepository {
       const processingTime = Date.now() - startTime
       
       console.error(`[AI REPOSITORY] ${serviceType} failed after ${processingTime}ms:`)
+      console.error(`[AI REPOSITORY] Service type: ${serviceType}`)
+      console.error(`[AI REPOSITORY] Endpoint URL: ${this.getServiceEndpoint(serviceType, endpointPath)}`)
       console.error(`[AI REPOSITORY] ERROR TYPE:`, typeof error)
       console.error(`[AI REPOSITORY] ERROR MESSAGE:`, error instanceof Error ? error.message : error)
       console.error(`[AI REPOSITORY] ERROR STACK:`, error instanceof Error ? error.stack : 'No stack available')
       console.error(`[AI REPOSITORY] RAW ERROR OBJECT:`, error)
       
+      // Do not swallow errors silently - let caller handle them
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',

@@ -259,9 +259,15 @@ class DocumentProcessingService:
         Returns:
             DocumentProcessingResult
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info("[DOC] metadata processing started")
+        
         # Validate request
         validation = self.validate_request(request)
         if not validation["valid"]:
+            logger.error(f"[DOC] validation failed: {validation['errors']}")
             return DocumentProcessingResult(
                 request_id=str(uuid.uuid4()),
                 success=False,
@@ -273,15 +279,65 @@ class DocumentProcessingService:
                 error_message="; ".join(validation["errors"])
             )
         
-        # Process the document
-        file_content = b""  # Empty file content since we're using OCR text from options
-        filename = (request.options or {}).get("filename", "uploaded_document")
+        # Extract file URL from options for metadata processing
+        options = request.options or {}
+        file_url = options.get("fileUrl") or options.get("file_url")
+        filename = options.get("filename") or options.get("fileName", "uploaded_document")
         
-        processing_result = self.processor.process_document_workflow(
-            file_content, filename, request.processing_type, request.options or {}
-        )
+        logger.info(f"[DOC] file fetch started for {filename}")
         
-        return self._convert_to_result_format(processing_result)
+        # Process the document - if we have fileUrl, fetch and process the file
+        if file_url:
+            try:
+                # Import here to avoid circular imports
+                import requests
+                import os
+                from urllib.parse import urlparse
+                
+                # Download file from URL
+                logger.info(f"[DOC] downloading file from {file_url}")
+                response = requests.get(file_url, timeout=30)
+                response.raise_for_status()
+                
+                file_content = response.content
+                logger.info(f"[DOC] file fetch success, size: {len(file_content)} bytes")
+                
+                # Process the downloaded file content
+                processing_result = self.processor.process_document_workflow(
+                    file_content, filename, request.processing_type, options
+                )
+                
+            except Exception as fetch_error:
+                logger.error(f"[DOC] file fetch failed: {fetch_error}")
+                # File download failed - return explicit failure
+                return DocumentProcessingResult(
+                    request_id=str(uuid.uuid4()),
+                    success=False,
+                    processing_time_ms=0,
+                    processing_type=request.processing_type,
+                    filename=filename,
+                    data=None,
+                    metadata={},
+                    error_message=f"File download failed: {str(fetch_error)}"
+                )
+        else:
+            # No file URL provided - process with empty content (may work for some workflows)
+            logger.warning("[DOC] no file URL provided, processing with empty content")
+            file_content = b""
+            
+            processing_result = self.processor.process_document_workflow(
+                file_content, filename, request.processing_type, options
+            )
+        
+        # Convert and return result
+        result = self._convert_to_result_format(processing_result)
+        
+        if result.success:
+            logger.info("[DOC] extraction success")
+        else:
+            logger.error(f"[DOC] extraction failed: {result.error_message}")
+        
+        return result
     
     def _convert_to_result_format(self, processing_result: Dict[str, Any]) -> DocumentProcessingResult:
         """

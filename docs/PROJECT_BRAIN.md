@@ -1,6 +1,6 @@
 # PROJECT_BRAIN
 
-Generated: 2026-04-03T09:25:33.993Z
+Generated: 2026-04-05T09:03:18.727Z
 
 ## Purpose
 
@@ -12,7 +12,7 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 
 - Path: `ai-services/app/main.py`
 - Summary: FastAPI Main Application Purpose: Initialize and configure the AI services microservice
-- Exports/Defines: startup_event, shutdown_event, health_check
+- Exports/Defines: get_allowed_origins, startup_event, shutdown_event, root, health_check
 
 ## ai-services/app/api
 
@@ -50,12 +50,24 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 - Summary: LLM Assist Service for Agricultural Document Processing This service adds AI-based intelligence on top of extracted data without modifying the core extraction logic. It provides summaries, risk analysis, and decision hints.
 - Exports/Defines: analyze_application, _get_required_fields, _generate_rule_based_analysis
 
+### llm_refinement_service.py
+
+- Path: `ai-services/app/modules/ai_assist/llm_refinement_service.py`
+- Summary: LLM Refinement Service for Agricultural Document Processing Purpose: Add LLM refinement layer for noisy documents without overriding deterministic truth
+- Exports/Defines: refine_document_with_llm, _generate_refined_summary
+
 ## ai-services/app/modules/document_processing
 
 ### __init__.py
 
 - Path: `ai-services/app/modules/document_processing/__init__.py`
 - Summary: Document Processing Module Purpose: Document processing and analysis services
+
+### candidate_extraction_engine.py
+
+- Path: `ai-services/app/modules/document_processing/candidate_extraction_engine.py`
+- Summary: Candidate Extraction & Scoring Engine Purpose: Multi-stage extraction pipeline that collects candidates from multiple sources and selects the best valid candidate based on semantic scoring This is the heart of the new extraction architecture - replacing regex-as-primary with a multi-source candidate approach.
+- Exports/Defines: CandidateSource, ValidationStatus, ExtractionCandidate, CandidateSet, is_valid, get_score
 
 ### classification_service.py
 
@@ -73,7 +85,19 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 
 - Path: `ai-services/app/modules/document_processing/document_processing_service.py`
 - Summary: Document Processing Service Purpose: Clean orchestration layer over rebuilt schema, classifier, extraction service, and processor
-- Exports/Defines: DocumentProcessingService, __init__, process_document, process_batch, classify_document
+- Exports/Defines: DocumentProcessingService, __init__, _safe_dict, _safe_list, _safe_str, _safe_number
+
+### document_schemas.py
+
+- Path: `ai-services/app/modules/document_processing/document_schemas.py`
+- Summary: Document Type Schemas Purpose: Explicit per-document schemas that drive extraction, validation, and field completeness These schemas define: - Required fields (must be present for completeness) - Optional fields (nice-to-have but extracted when available) - Field-specific validation rules - Document-specific business logic
+- Exports/Defines: FieldType, FieldSchema, DocumentSchema, get_all_fields
+
+### extraction_integration_helper.py
+
+- Path: `ai-services/app/modules/document_processing/extraction_integration_helper.py`
+- Summary: Extraction Integration Helper Purpose: Integrates the new unified orchestrator with the existing extraction pipeline This helper bridges the old extraction service with the new multi-stage pipeline, ensuring that: 1. Old extraction output is used as a baseline 2. New semantic and validation passes are applied 3. Money extraction is strictly validated 4. Missing fields are authoritative
+- Exports/Defines: ExtractionIntegrationHelper, __init__, enhance_extraction_result
 
 ### extraction_router.py
 
@@ -105,6 +129,18 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 - Summary: Layout Analyzer for Document Generalization Purpose: Extract semantic structure from diverse document layouts without rigid field boundaries
 - Exports/Defines: LayoutType, SemanticBlock, LayoutAnalyzer, __init__
 
+### ml_priority.py
+
+- Path: `ai-services/app/modules/document_processing/ml_priority.py`
+- Summary: ML Priority Layer for Agricultural Document Processing Uses RandomForestClassifier to predict application priority and processing queue
+- Exports/Defines: ApplicationPriorityModel, __init__, _save_model, _load_model, _extract_features
+
+### money_extraction_validator.py
+
+- Path: `ai-services/app/modules/document_processing/money_extraction_validator.py`
+- Summary: Strict Money Extraction Validator Purpose: Validates financial field extraction with strict rules to prevent: - Wrong amounts from being extracted - Reference IDs being confused with amounts - Years being extracted as amounts - Aadhaar/Phone numbers being extracted as amounts - Truncated or malformed amounts Key rule: Money extraction MUST have explicit financial context
+- Exports/Defines: MoneyExtractionValidator
+
 ### predictive_analytics.py
 
 - Path: `ai-services/app/modules/document_processing/predictive_analytics.py`
@@ -127,7 +163,7 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 
 - Path: `ai-services/app/modules/document_processing/semantic_extractor.py`
 - Summary: Semantic Extractor for Enhanced Document Intelligence Purpose: Advanced extraction using semantic understanding and context awareness
-- Exports/Defines: SemanticField, SemanticExtractor, __init__, extract_semantic_fields
+- Exports/Defines: SemanticField, SemanticExtractor, __init__
 
 ### service_schema.py
 
@@ -135,11 +171,23 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 - Summary: No top-level summary comment found.
 - Exports/Defines: DocumentProcessingRequest, ExtractedFieldData, RiskFlag, DecisionSupport, ProcessedDocumentData, DocumentProcessingResult
 
+### unified_extraction_orchestrator.py
+
+- Path: `ai-services/app/modules/document_processing/unified_extraction_orchestrator.py`
+- Summary: Unified Extraction Orchestrator Purpose: Orchestrates the multi-stage extraction pipeline using: - Document schemas for validation - Candidate extraction engine for candidate collection/scoring - Semantic extraction for field inference - Handler specialists for document-specific extraction - Authoritative validation pass for final output This orchestrator is the main entry point for extraction and produces reliable, schema-validated output
+- Exports/Defines: UnifiedExtractionOrchestrator, __init__, process_document_unified
+
 ### utils.py
 
 - Path: `ai-services/app/modules/document_processing/utils.py`
 - Summary: Document Processing Utilities Clean shared helper module for normalization, boundary-aware extraction, validation, and field normalization in the document-processing pipeline.
 - Exports/Defines: normalize_ocr_text, is_missing_value
+
+### workflow_service.py
+
+- Path: `ai-services/app/modules/document_processing/workflow_service.py`
+- Summary: Workflow Service for Agricultural Document Processing Purpose: Minimal but real workflow layer for status assignment and queue management
+- Exports/Defines: WorkflowStatus, QueuePriority, WorkflowService, __init__, assign_status
 
 ## ai-services/app/modules/document_processing/handlers
 
@@ -214,8 +262,8 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 ### intelligence_service.py
 
 - Path: `ai-services/app/modules/intelligence/intelligence_service.py`
-- Summary: Intelligence Layer for Agricultural Document Processing Built on top of existing extraction output
-- Exports/Defines: IntelligenceService, generate_document_summary, generate_case_insight
+- Summary: Intelligence Layer for Agricultural Document Processing Built on top of existing extraction output New Part 7: Generate real officer-facing summaries and contextual insights
+- Exports/Defines: IntelligenceService, generate_officer_summary, _generate_scheme_application_summary
 
 ## ai-services/app/schemas
 
@@ -230,7 +278,7 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 ### app.ts
 
 - Path: `backend/src/app.ts`
-- Summary: Express App Configuration Purpose: Configure Express middleware and routes
+- Summary: No top-level summary comment found.
 
 ### server.ts
 
@@ -353,7 +401,6 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 
 - Path: `backend/src/modules/applications/applications.service.ts`
 - Summary: Applications Service Purpose: Business logic for application management
-- Exports/Defines: ApplicationsService
 
 ### applications.types.ts
 
@@ -447,7 +494,7 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 ### ApplicationSections.tsx
 
 - Path: `frontend/src/components/application/ApplicationSections.tsx`
-- Summary: Application Sections Component Purpose: Displays all application content sections with AI-enhanced data
+- Summary: No top-level summary comment found.
 - Exports/Defines: ApplicationSections
 
 ## frontend/src/components/Navigation
@@ -609,13 +656,13 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 ### ApplicationsPage.tsx
 
 - Path: `frontend/src/pages/ApplicationsPage.tsx`
-- Summary: Applications Page Component Purpose: Page for managing and viewing applications
+- Summary: Applications Page Component Purpose: Advanced case management with ML indicators and filters
 - Exports/Defines: ApplicationsPage
 
 ### DashboardPage.tsx
 
 - Path: `frontend/src/pages/DashboardPage.tsx`
-- Summary: Dashboard Page Component Purpose: Simple summary page for dashboard route
+- Summary: Dashboard Page Component Purpose: Real government admin dashboard with live metrics
 - Exports/Defines: DashboardPage
 
 ### FarmerDetailPage.tsx
@@ -639,7 +686,7 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 ### VerificationPage.tsx
 
 - Path: `frontend/src/pages/VerificationPage.tsx`
-- Summary: Verification Queue Page Purpose: Placeholder page for verification queue management
+- Summary: Verification Queue Page Purpose: Real verification queue with ML-prioritized applications
 - Exports/Defines: VerificationPage
 
 ## frontend/src/services
@@ -648,7 +695,7 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 
 - Path: `frontend/src/services/api.ts`
 - Summary: API Client Service Purpose: Centralized HTTP client for backend communication
-- Exports/Defines: apiClient, ApiClient
+- Exports/Defines: ApiClient
 
 ### applicationsService.ts
 
@@ -659,7 +706,6 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 
 - Path: `frontend/src/services/dashboardService.ts`
 - Summary: Dashboard API Service Purpose: Service layer for dashboard-related API calls
-- Exports/Defines: dashboardService, DashboardService
 
 ### farmerService.ts
 

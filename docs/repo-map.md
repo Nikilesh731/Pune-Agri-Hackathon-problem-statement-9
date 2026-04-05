@@ -1,6 +1,6 @@
 # Repo Map
 
-> Generated automatically on 2026-04-04T16:31:44.465Z
+> Generated automatically on 2026-04-05T09:03:09.585Z
 > Do not edit manually - run `npm run repo:map`
 
 ## Project Structure
@@ -78,6 +78,7 @@ frontend/
   ├── tailwind.config.js
   ├── tsconfig.json
   ├── tsconfig.node.json
+  ├── vercel.json
   └── vite.config.ts
 backend/
   ├── generated
@@ -261,6 +262,7 @@ ai-services/
   ├── debug_structure.py
   ├── README.md
   ├── requirements.txt
+  ├── runtime.txt
   ├── test_ai_fields.py
   └── test_production_intelligence.py
 shared/

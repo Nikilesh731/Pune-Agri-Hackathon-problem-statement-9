@@ -39,6 +39,47 @@ interface AIProcessingResult {
 class AIOrchestratorService {
   
   /**
+   * Validate if extracted data contains meaningful information
+   */
+  private hasValidExtractedData(extractedData: any): boolean {
+    if (!extractedData || typeof extractedData !== 'object') {
+      return false;
+    }
+    
+    // Check document_type exists and is not unknown
+    const docType = extractedData.document_type;
+    if (docType && docType !== 'unknown' && docType.trim() !== '') {
+      return true;
+    }
+    
+    // Check structured_data has at least 1 key
+    const structuredData = extractedData.structured_data;
+    if (structuredData && typeof structuredData === 'object' && Object.keys(structuredData).length > 0) {
+      return true;
+    }
+    
+    // Check extracted_fields has at least 1 key
+    const extractedFields = extractedData.extracted_fields;
+    if (extractedFields && typeof extractedFields === 'object' && Object.keys(extractedFields).length > 0) {
+      return true;
+    }
+    
+    // Check canonical exists and has meaningful nested data
+    const canonical = extractedData.canonical;
+    if (canonical && typeof canonical === 'object') {
+      // Check if canonical has any meaningful nested properties
+      const meaningfulKeys = ['applicant', 'agriculture', 'request', 'document_meta'];
+      for (const key of meaningfulKeys) {
+        if (canonical[key] && typeof canonical[key] === 'object' && Object.keys(canonical[key]).length > 0) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  }
+
+  /**
    * Normalize AI service output to canonical agriculture schema
    */
   private normalizeToCanonicalSchema(aiServiceOutput: any, fileName?: string): CanonicalAgricultureData {
@@ -238,70 +279,13 @@ class AIOrchestratorService {
     const startTime = Date.now()
     const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     const results: any = {}
+    let hasValidExtraction = false;
     
     try {
-      // STEP 3: USE SUPABASE OBJECT PATH DIRECTLY
-      let ocrText = ""
+      // STEP 1: AUTHORITATIVE DOCUMENT PROCESSING
+      console.log('[AI] document-processing started');
       
-      // STEP 1: FILE TYPE DETECTION
-      const normalizedFileType = (input.fileType || '').toLowerCase()
-      const isPdf = 
-        normalizedFileType === 'pdf' ||
-        normalizedFileType === 'application/pdf' ||
-        input.fileName?.toLowerCase().endsWith('.pdf')
-      
-      const isImage = 
-        normalizedFileType.startsWith('image/') ||
-        normalizedFileType === 'png' ||
-        normalizedFileType === 'jpg' ||
-        normalizedFileType === 'jpeg' ||
-        input.fileName?.toLowerCase().match(/\.(png|jpg|jpeg|gif|bmp|webp)$/)
-      
-      // STEP 2: TEXT EXTRACTION
-      if (input.fileUrl && isPdf) {
-        const objectPath = input.fileUrl
-        ocrText = await this.extractPdfText(objectPath)
-        
-        if (!ocrText || ocrText.trim().length === 0) {
-          console.warn("PDF text extraction failed or returned empty text")
-        }
-      } else if (input.fileUrl && isImage) {
-        const objectPath = input.fileUrl
-        
-        try {
-          const { data, error } = await supabase.storage.from('documents').download(objectPath)
-          
-          if (error || !data) {
-            console.error('SUPABASE IMAGE DOWNLOAD FAILED:', error)
-            ocrText = ""
-          } else {
-            const arrayBuffer = await data.arrayBuffer()
-            const buffer = Buffer.from(arrayBuffer)
-            
-            ocrText = await this.extractImageText(buffer)
-            
-            if (!ocrText || ocrText.trim().length === 0) {
-              console.warn("Image OCR extraction failed or returned empty text")
-            }
-          }
-        } catch (error) {
-          console.error("Image processing failed:", error)
-          ocrText = ""
-        }
-      } else if (input.fileUrl && !isPdf && !isImage) {
-        const objectPath = input.fileUrl
-        
-        ocrText = await this.extractTextFile(objectPath)
-        
-        if (!ocrText || ocrText.trim().length === 0) {
-          console.warn("Text file download failed or returned empty text")
-        }
-      }
-      
-      // STEP 3: AI SERVICE PROCESSING - AUTHORITATIVE DOCUMENT PROCESSING
       let documentProcessingResult: any;
-      let hasValidExtraction = false;
-      
       try {
         // Use correct payload format for metadata processing
         const payload = {
@@ -313,44 +297,31 @@ class AIOrchestratorService {
           }
         };
         
-        console.log("[AI] Using metadata processing route");
-        console.log("[AI] Payload:", payload);
+        console.log('[AI] Payload:', payload);
         
         documentProcessingResult = await aiOrchestratorRepository.callAIService('document-processing', payload)
         
       } catch (aiServiceError) {
-        console.error('[AI SERVICE] Document processing failed:', aiServiceError instanceof Error ? aiServiceError.message : aiServiceError);
+        console.error('[AI] document-processing failed:', aiServiceError instanceof Error ? aiServiceError.message : aiServiceError);
         
-        // Document processing itself failed - use full fallback
-        results.extractedData = {
-          document_type: 'unknown',
-          structured_data: {},
-          extracted_fields: {},
-          missing_fields: ["AI processing failed"],
-          confidence: 0,
-          reasoning: ["AI processing failed"],
-          classification_confidence: 0,
-          classification_reasoning: {},
-          risk_flags: [],
-          decision_support: {},
-          canonical: null
-        };
-        
-        results.aiProcessedAt = new Date();
-        results.aiProcessingStatus = 'failed';
-        
+        // Document processing itself failed - return failure immediately
         return {
           success: false,
-          error: aiServiceError instanceof Error ? aiServiceError.message : 'AI service call failed',
-          data: results,
+          error: aiServiceError instanceof Error ? aiServiceError.message : 'Document processing failed',
+          data: {
+            aiProcessingStatus: 'failed',
+            aiProcessedAt: new Date()
+          },
           processingTime: Date.now() - startTime,
           requestId,
           timestamp: new Date()
         };
       }
       
-      // STEP 4: DATA EXTRACTION AND VALIDATION - AUTHORITATIVE
+      // STEP 2: BUILD AND PRESERVE EXTRACTED DATA IMMEDIATELY AFTER DOCUMENT-PROCESSING
       if (documentProcessingResult.success && documentProcessingResult.data) {
+        console.log('[AI] document-processing success');
+        
         try {
           // USE THE FROZEN AI RESPONSE CONTRACT
           const payload = documentProcessingResult.data || {};
@@ -375,7 +346,7 @@ class AIOrchestratorService {
           // Normalize to canonical schema using frozen contract
           const canonicalData = this.normalizeToCanonicalSchema(documentProcessingResult.data, input.fileName);
           
-          // BUILD FINAL EXTRACTED DATA FROM FROZEN CONTRACT
+          // BUILD FINAL EXTRACTED DATA FROM FROZEN CONTRACT - AUTHORITATIVE
           results.extractedData = {
             // Frozen contract fields - authoritative structure
             document_type: payload?.document_type || structured_data?.document_type,
@@ -400,32 +371,21 @@ class AIOrchestratorService {
             missingFields: missing_fields, // Map frozen contract to legacy name
             extractionConfidence: payload?.confidence || payload?.decision_support?.confidence || 0 // Map frozen contract to legacy name with fallback
           };
-          results.ocrProcessedAt = new Date();
           
           // VALIDITY CHECK: Is this a real extraction result?
-          const docType = results.extractedData.document_type || '';
-          const hasStructuredData = Object.keys(structured_data).length > 0;
-          const hasExtractedFields = Object.keys(extracted_fields).length > 0;
-          const hasCanonical = canonicalData && typeof canonicalData === 'object';
-          
-          hasValidExtraction = (
-            docType && docType !== 'unknown' && docType.trim() !== '' ||
-            hasStructuredData ||
-            hasExtractedFields ||
-            hasCanonical
-          );
+          hasValidExtraction = this.hasValidExtractedData(results.extractedData);
           
           if (hasValidExtraction) {
-            console.log('[AI] document-processing success - valid extraction preserved');
+            console.log('[AI] extractedData valid - preservation successful');
           } else {
-            console.log('[AI] document-processing returned invalid data - using fallback');
+            console.log('[AI] extractedData invalid - using fallback');
             results.extractedData = {
               document_type: 'unknown',
               structured_data: {},
               extracted_fields: {},
-              missing_fields: ['AI processing failed'],
+              missing_fields: ['Document processing returned invalid data'],
               confidence: 0,
-              reasoning: ['AI processing failed'],
+              reasoning: ['Document processing returned invalid data'],
               classification_confidence: 0,
               classification_reasoning: {},
               risk_flags: [],
@@ -435,16 +395,15 @@ class AIOrchestratorService {
           }
           
         } catch (extractionError) {
-          console.error('[DATA EXTRACTION] Failed:', extractionError instanceof Error ? extractionError.message : extractionError);
-          
-          // Extraction processing failed - use fallback
+          console.error('[AI] data extraction failed:', extractionError instanceof Error ? extractionError.message : extractionError);
+          hasValidExtraction = false;
           results.extractedData = {
             document_type: 'unknown',
             structured_data: {},
             extracted_fields: {},
-            missing_fields: ['AI processing failed'],
+            missing_fields: ['Data extraction failed'],
             confidence: 0,
-            reasoning: ['AI processing failed'],
+            reasoning: ['Data extraction failed'],
             classification_confidence: 0,
             classification_reasoning: {},
             risk_flags: [],
@@ -453,15 +412,15 @@ class AIOrchestratorService {
           };
         }
       } else {
-        console.log('[AI SERVICE] Document processing returned no data or failed');
-        // Document processing failed - use fallback
+        console.log('[AI] document-processing returned no data or failed');
+        hasValidExtraction = false;
         results.extractedData = {
           document_type: 'unknown',
           structured_data: {},
           extracted_fields: {},
-          missing_fields: ['AI processing failed'],
+          missing_fields: ['Document processing failed'],
           confidence: 0,
-          reasoning: ['AI processing failed'],
+          reasoning: ['Document processing failed'],
           classification_confidence: 0,
           classification_reasoning: {},
           risk_flags: [],
@@ -470,36 +429,35 @@ class AIOrchestratorService {
         };
       }
       
-      // STEP 5: DOWNSTREAM AI SERVICES - ISOLATED FAILURES
+      // STEP 3: OPTIONAL DOWNSTREAM SERVICES - ISOLATED FAILURES
       
-      // Step 5.1: Enhanced Intelligence Summary - ISOLATED
-      if (ocrText && ocrText.trim().length > 0) {
-        try {
-          // Use document processing service with intelligence service for enhanced summary
-          const intelligenceResult = await aiOrchestratorRepository.callAIService('summarization', {
-            processing_type: 'full_process',
-            options: {
-              filename: input.fileName,
-              ocr_text: ocrText  // Pass OCR text directly
-            }
-          })
-          
-          if (intelligenceResult.success && intelligenceResult.data?.extractedData?.summary) {
-            // Use enhanced intelligence summary
-            results.aiSummary = intelligenceResult.data.extractedData.summary
-          } else if (intelligenceResult.success && intelligenceResult.data?.summary) {
-            // Fallback to top-level summary
-            results.aiSummary = intelligenceResult.data.summary
+      // Step 3.1: Enhanced Intelligence Summary - ISOLATED
+      try {
+        const documentType = results.extractedData?.canonical?.document_type || results.extractedData?.document_type || 'unknown';
+        
+        // Use document processing service with intelligence service for enhanced summary
+        const intelligenceResult = await aiOrchestratorRepository.callAIService('summarization', {
+          processing_type: 'full_process',
+          options: {
+            filename: input.fileName,
+            extractedData: results.extractedData  // Pass extracted data for context
           }
-        } catch (intelligenceError) {
-          console.warn('[AI] summarization failed, continuing:', intelligenceError instanceof Error ? intelligenceError.message : intelligenceError);
-          // Use safe fallback summary format
-          const documentType = results.extractedData?.canonical?.document_type || results.extractedData?.document_type || 'unknown';
-          results.aiSummary = `Document processed as ${documentType.replace('_', ' ')}. Review extracted fields for verification.`;
+        })
+        
+        if (intelligenceResult.success && intelligenceResult.data?.extractedData?.summary) {
+          results.aiSummary = intelligenceResult.data.extractedData.summary
+        } else if (intelligenceResult.success && intelligenceResult.data?.summary) {
+          results.aiSummary = intelligenceResult.data.summary
         }
+        
+      } catch (intelligenceError) {
+        console.warn('[AI] summarization failed, continuing:', intelligenceError instanceof Error ? intelligenceError.message : intelligenceError);
+        // Use safe fallback summary format
+        const documentType = results.extractedData?.canonical?.document_type || results.extractedData?.document_type || 'unknown';
+        results.aiSummary = `Document processed as ${documentType.replace('_', ' ')}. Review extracted fields for verification.`;
       }
       
-      // Step 5.2: Priority Scoring - ISOLATED
+      // Step 3.2: Priority Scoring - ISOLATED
       try {
         const hasMissingDocuments = (results.extractedData?.missing_fields?.length || 0) > 0;
         const documentCompleteness = results.extractedData?.confidence || 0;
@@ -507,7 +465,6 @@ class AIOrchestratorService {
           results.extractedData?.canonical?.document_type ||
           results.extractedData?.document_type || 
           'general';
-        const rawExtractedText = results.extractedData?.reasoning?.join(' ') || ocrText || '';
         
         const priorityResult = await aiOrchestratorRepository.callAIService('application-priority-scoring', {
           application_data: {
@@ -515,7 +472,7 @@ class AIOrchestratorService {
             submissionDate: new Date().toISOString(),
             hasMissingDocuments: hasMissingDocuments,
             documentCompleteness: documentCompleteness,
-            rawExtractedText: rawExtractedText
+            extractedData: results.extractedData
           },
           scoring_criteria: ['urgency', 'impact', 'compliance', 'farmer_vulnerability']
         })
@@ -523,12 +480,13 @@ class AIOrchestratorService {
         if (priorityResult.success) {
           results.priorityScore = ((priorityResult.data?.priority_score ?? 0.5) * 100)
         }
+        
       } catch (priorityError) {
         console.warn('[AI] priority scoring failed, continuing:', priorityError instanceof Error ? priorityError.message : priorityError);
         results.priorityScore = 50; // Safe default
       }
       
-      // Step 5.3: Fraud Detection - ISOLATED
+      // Step 3.3: Fraud Detection - ISOLATED
       try {
         const sd = results.extractedData?.structured_data || {};
         
@@ -553,13 +511,14 @@ class AIOrchestratorService {
           results.fraudRiskScore = fraudResult.data?.fraud_score ?? 0.1
           results.fraudFlags = fraudResult.data?.indicators || []
         }
+        
       } catch (fraudError) {
         console.warn('[AI] fraud detection failed, continuing:', fraudError instanceof Error ? fraudError.message : fraudError);
         results.fraudRiskScore = 0; // Safe default
         results.fraudFlags = []; // Safe default
       }
       
-      // STEP 6: FINAL VERIFICATION AND RESPONSE
+      // STEP 4: FINAL VERIFICATION AND RESPONSE
       const hasMissingFields = (results.extractedData?.missing_fields?.length || 0) > 0;
       const confidence = results.extractedData?.confidence || 0;
       
@@ -574,8 +533,8 @@ class AIOrchestratorService {
       results.aiProcessedAt = new Date()
       results.aiProcessingStatus = 'completed'
       
-      // Determine success based on document processing, not downstream services
-      const overallSuccess = hasValidExtraction || results.extractedData?.document_type !== 'unknown';
+      // FINAL SUCCESS RULE: Return success only when document-processing succeeded and extractedData is valid
+      const overallSuccess = hasValidExtraction;
       
       if (overallSuccess) {
         console.log('[AI] returning preserved extraction result');
