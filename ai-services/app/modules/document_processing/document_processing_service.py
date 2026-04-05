@@ -306,9 +306,45 @@ class DocumentProcessingService:
                 
                 file_content = response.content
                 logger.info(f"[DOC] file fetch success, size: {len(file_content)} bytes")
+                
+                # Extract OCR/text from downloaded file before workflow
+                try:
+                    extracted_text = self._extract_text_from_file(file_content, filename)
+                    logger.info(f"[DOC OCR] extracted text length: {len(extracted_text)}")
+                    
+                    if not extracted_text.strip():
+                        logger.error("[DOC OCR] no text could be extracted from file")
+                        return DocumentProcessingResult(
+                            request_id=str(uuid.uuid4()),
+                            success=False,
+                            processing_time_ms=0,
+                            processing_type=request.processing_type,
+                            filename=filename,
+                            data=None,
+                            metadata={},
+                            error_message="Unable to extract text from downloaded file - file may be corrupted or unreadable"
+                        )
+                    
+                    # Add extracted OCR text to options for workflow
+                    options["ocr_text"] = extracted_text
+                    logger.info(f"[DOC OCR] passing OCR text to workflow")
+                    
+                except Exception as ocr_error:
+                    logger.error(f"[DOC OCR] extraction failed: {ocr_error}")
+                    return DocumentProcessingResult(
+                        request_id=str(uuid.uuid4()),
+                        success=False,
+                        processing_time_ms=0,
+                        processing_type=request.processing_type,
+                        filename=filename,
+                        data=None,
+                        metadata={},
+                        error_message=f"Text extraction failed: {str(ocr_error)}"
+                    )
+                
                 logger.info(f"[DOC] extraction output: processing with workflow")
                 
-                # Process the downloaded file content
+                # Process the downloaded file content with OCR text
                 processing_result = self.processor.process_document_workflow(
                     file_content, filename, request.processing_type, options
                 )
@@ -1360,3 +1396,131 @@ class DocumentProcessingService:
         sanitized["extracted_fields"] = extracted_fields
         
         return sanitized
+    
+    def _extract_text_from_file(self, file_content: bytes, filename: str) -> str:
+        """
+        Extract text from downloaded file based on file type
+        
+        Args:
+            file_content: Raw file bytes
+            filename: Original filename for type detection
+            
+        Returns:
+            Extracted text content
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Detect file type from filename
+        file_extension = filename.lower().split('.')[-1] if '.' in filename.lower() else ''
+        logger.info(f"[DOC OCR] detected file type: {file_extension}")
+        
+        try:
+            if file_extension == 'pdf':
+                return self._extract_text_from_pdf(file_content)
+            elif file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp']:
+                return self._extract_text_from_image(file_content)
+            elif file_extension in ['txt', 'text']:
+                return self._extract_text_from_text_file(file_content)
+            else:
+                logger.warning(f"[DOC OCR] unsupported file type: {file_extension}")
+                return ""
+        except Exception as e:
+            logger.error(f"[DOC OCR] extraction error for {file_extension}: {e}")
+            raise
+    
+    def _extract_text_from_pdf(self, file_content: bytes) -> str:
+        """Extract text from PDF bytes using pdfplumber"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            import pdfplumber
+            import io
+            
+            text_parts = []
+            with pdfplumber.open(io.BytesIO(file_content)) as pdf:
+                for page_num, page in enumerate(pdf.pages):
+                    try:
+                        page_text = page.extract_text()
+                        if page_text and page_text.strip():
+                            text_parts.append(page_text.strip())
+                            logger.debug(f"[DOC OCR] extracted {len(page_text)} chars from page {page_num + 1}")
+                    except Exception as page_error:
+                        logger.warning(f"[DOC OCR] failed to extract page {page_num + 1}: {page_error}")
+                        continue
+            
+            extracted_text = "\n".join(text_parts)
+            logger.info(f"[DOC OCR] PDF extraction complete: {len(extracted_text)} chars from {len(text_parts)} pages")
+            return extracted_text
+            
+        except Exception as e:
+            logger.error(f"[DOC OCR] PDF extraction failed: {e}")
+            # Fallback to PyMuPDF if pdfplumber fails
+            try:
+                import fitz  # PyMuPDF
+                doc = fitz.open(stream=file_content, filetype="pdf")
+                text_parts = []
+                for page_num in range(len(doc)):
+                    page = doc.load_page(page_num)
+                    page_text = page.get_text()
+                    if page_text and page_text.strip():
+                        text_parts.append(page_text.strip())
+                
+                doc.close()
+                extracted_text = "\n".join(text_parts)
+                logger.info(f"[DOC OCR] PyMuPDF fallback extraction: {len(extracted_text)} chars")
+                return extracted_text
+                
+            except Exception as fallback_error:
+                logger.error(f"[DOC OCR] PyMuPDF fallback also failed: {fallback_error}")
+                raise
+    
+    def _extract_text_from_image(self, file_content: bytes) -> str:
+        """Extract text from image bytes using OCR"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            import PIL.Image
+            import pytesseract
+            import io
+            
+            # Open image from bytes
+            image = PIL.Image.open(io.BytesIO(file_content))
+            
+            # Perform OCR
+            extracted_text = pytesseract.image_to_string(image)
+            
+            logger.info(f"[DOC OCR] Image OCR extraction complete: {len(extracted_text)} chars")
+            return extracted_text.strip()
+            
+        except Exception as e:
+            logger.error(f"[DOC OCR] Image OCR extraction failed: {e}")
+            raise
+    
+    def _extract_text_from_text_file(self, file_content: bytes) -> str:
+        """Extract text from text file bytes"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Try UTF-8 first, then fallback to other encodings
+            encodings = ['utf-8', 'latin-1', 'cp1252']
+            
+            for encoding in encodings:
+                try:
+                    text = file_content.decode(encoding)
+                    logger.info(f"[DOC OCR] Text file extraction complete with {encoding}: {len(text)} chars")
+                    return text.strip()
+                except UnicodeDecodeError:
+                    continue
+            
+            # If all encodings fail, try with error handling
+            text = file_content.decode('utf-8', errors='ignore')
+            logger.warning(f"[DOC OCR] Text file extraction with errors: {len(text)} chars")
+            return text.strip()
+            
+        except Exception as e:
+            logger.error(f"[DOC OCR] Text file extraction failed: {e}")
+            raise
