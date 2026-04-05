@@ -267,6 +267,8 @@ class ApplicationsController {
     console.log('[STRICT DUPLICATE] File name:', file.originalname)
     console.log('[STRICT DUPLICATE] File size:', file.size)
 
+    console.log("[FLOW] Before duplicate check")
+
     // AUTHORITATIVE DUPLICATE CHECK - File hash based
     const duplicateCheck = await applicationsService.checkStrictDuplicate({
       fileHash,
@@ -274,6 +276,8 @@ class ApplicationsController {
       fileSize: file.size,
       applicantId
     })
+
+    console.log("[FLOW] After duplicate check:", duplicateCheck)
 
     console.log('[STRICT DUPLICATE] Final result:', {
       isDuplicate: duplicateCheck.isDuplicate,
@@ -283,8 +287,11 @@ class ApplicationsController {
       blockReason: duplicateCheck.blockReason
     })
 
+    console.log("[FLOW] Entering scenario decision")
+
     // SCENARIO A: BLOCK ACTIVE DUPLICATE
     if (duplicateCheck.isDuplicate && !duplicateCheck.canResubmit) {
+      console.log("[FLOW] Scenario A triggered")
       console.log('[STRICT DUPLICATE] BLOCKING - Active duplicate found:', {
         existingApplicationId: duplicateCheck.existingApplicationId,
         existingStatus: duplicateCheck.existingStatus,
@@ -311,6 +318,7 @@ class ApplicationsController {
 
     // SCENARIO B: ALLOW RE-UPLOAD (completed duplicate)
     if (duplicateCheck.isDuplicate && duplicateCheck.canResubmit) {
+      console.log("[FLOW] Scenario B triggered")
       console.log('[STRICT DUPLICATE] ALLOWING RE-UPLOAD:', {
         existingApplicationId: duplicateCheck.existingApplicationId,
         existingStatus: duplicateCheck.existingStatus
@@ -364,6 +372,7 @@ class ApplicationsController {
 
     // SCENARIO C: NORMAL NEW UPLOAD (no duplicate)
     console.log('[STRICT DUPLICATE] Creating new application - no duplicate found');
+    console.log("[FLOW] Scenario C triggered")
     
     const applicationData: CreateApplicationInput = {
       applicantId: applicantId,
@@ -399,6 +408,7 @@ class ApplicationsController {
     }
 
     try {
+      console.log("[FLOW] Creating application now")
       const result = await applicationsService.createApplication(applicationData)
       console.log('[UPLOAD] Application created successfully:', result.application?.id);
       

@@ -271,6 +271,7 @@ class ApplicationsService {
   }> {
     const { fileHash, fileName, fileSize, applicantId } = params
     
+    console.log("[DUP CHECK] Start")
     console.log('[STRICT DUPLICATE] Final authoritative check:', {
       fileHash: fileHash.substring(0, 16) + '...',
       fileName,
@@ -281,6 +282,8 @@ class ApplicationsService {
     try {
       // PRIMARY KEY: File hash exact match (most reliable)
       const hashMatches = await applicationsRepository.findApplicationsByFileHash(fileHash)
+      
+      console.log("[DUP CHECK] Query result:", hashMatches.length, "hash matches found")
       
       if (hashMatches.length > 0) {
         const latestMatch = hashMatches[0] // Already ordered by desc createdAt
@@ -297,21 +300,25 @@ class ApplicationsService {
 
         if (isActive) {
           console.log('[STRICT DUPLICATE] BLOCKED - Active duplicate found')
-          return {
+          const blockResult = {
             isDuplicate: true,
             canResubmit: false,
             existingApplicationId: latestMatch.id,
             existingStatus: latestMatch.status,
             blockReason: 'Duplicate document already under processing'
           }
+          console.log("[DUP CHECK] Returning:", blockResult)
+          return blockResult
         } else if (canResubmit) {
           console.log('[STRICT DUPLICATE] ALLOWED - Completed duplicate, re-upload permitted')
-          return {
+          const resubmitResult = {
             isDuplicate: true,
             canResubmit: true,
             existingApplicationId: latestMatch.id,
             existingStatus: latestMatch.status
           }
+          console.log("[DUP CHECK] Returning:", resubmitResult)
+          return resubmitResult
         }
       }
 
@@ -352,13 +359,15 @@ class ApplicationsService {
       }
 
       console.log('[STRICT DUPLICATE] No duplicates found - allowing new upload')
-      return {
+      const finalResult = {
         isDuplicate: false,
         canResubmit: false,
         existingApplicationId: undefined,
         existingStatus: undefined,
         blockReason: undefined
       }
+      console.log("[DUP CHECK] Returning:", finalResult)
+      return finalResult
 
     } catch (error) {
       console.error('[STRICT DUPLICATE] Error during duplicate check:', error)
