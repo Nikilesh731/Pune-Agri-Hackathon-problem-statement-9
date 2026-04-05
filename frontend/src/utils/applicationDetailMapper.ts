@@ -520,16 +520,17 @@ function getApplicantName(application: any): string {
 }
 
 /**
- * Helper function to normalize priority score to 0-100 range
- * CRITICAL FIX: Prevents 4000% display when priority_score = 40
+ * SHARED HELPER: Normalize priority score to 0-100 range
+ * CRITICAL FIX: Prevents 6000% display when priority_score = 60
+ * USAGE: `${normalizePriorityScore(priority_score)}%`
  */
-function normalizePriority(value: any): number {
+export function normalizePriorityScore(value: any): number {
   const n = Number(value || 0)
   if (!Number.isFinite(n)) return 0
   
   // If score is already in 0-100 range, return as-is
   // If score is 0-1 decimal, convert to 0-100
-  // This prevents 40 -> 4000% bug
+  // This prevents 60 -> 6000% bug
   return n <= 1 ? Math.round(n * 100) : Math.round(n)
 }
 
@@ -615,7 +616,7 @@ export function normalizeApplicationData(application: Application): NormalizedAp
     const displayApplicantName = getApplicantName(application)
     const displayStatus = application.status || 'unknown'
     const displayDocumentType = getDocumentTypeLabel(documentType)
-    const priorityScoreNormalized = normalizePriority(application.priorityScore || mlInsights.priority_score || 0)
+    const priorityScoreNormalized = normalizePriorityScore(application.priorityScore || mlInsights.priority_score || 0)
     const riskLevel = normalizeRiskLevel(mlInsights.risk_level || predictions.risk_level || 'medium')
 
     return {
@@ -1022,8 +1023,8 @@ export function normalizeQueueItem(item: any): NormalizedQueueItem {
     item.applicantId ||
     "Unknown Applicant"
 
-  // Priority score normalization rule - FIXED to prevent 4000% bug
-  const priorityScoreNormalized = normalizePriority(item.priorityScore || 0)
+  // Priority score normalization rule - FIXED to prevent 6000% bug
+  const priorityScoreNormalized = normalizePriorityScore(item.priorityScore || 0)
 
   // Display document type
   const displayDocumentType = item.documentType?.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()) || 'Unknown'

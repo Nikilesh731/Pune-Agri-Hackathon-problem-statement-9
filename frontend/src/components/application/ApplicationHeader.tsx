@@ -102,9 +102,6 @@ export function ApplicationHeader({
       title={`${getDocumentTypeLabel(documentType)} - ${applicantName}`}
       subtitle={`${application.caseId || `CASE-${String(application.id).slice(0,8)}`} | ${(application.aiProcessingStatus?.toString().toLowerCase() === 'completed' || application.status?.toString().toLowerCase() === 'processed' || application.status?.toString().toLowerCase() === 'approved') ? 'CASE_READY' : 'UNDER_REVIEW'}`}
     >
-      <div className="w-full mb-2">
-        <p className="text-sm text-gray-700">{(application as any).normalizedData?.officerSummary || application.officerSummary || 'Document processed. Review extracted details.'}</p>
-      </div>
       <div className="flex items-center justify-between">
         {showBackLink && (
           <Link

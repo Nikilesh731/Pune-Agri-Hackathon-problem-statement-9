@@ -180,7 +180,24 @@ class DocumentClassificationService:
                 "classification_reasoning": grievance_reasoning
             }
         
-        # Priority 1.5: Check for insurance priority override (higher priority than subsidy)
+        # Priority 1.5: Check for scheme_application priority override (HIGHEST priority for structure)
+        scheme_score, scheme_reasoning = self._detect_scheme_application_priority(text_lower, filename)
+        if scheme_score >= 0.6:  # Lower threshold for strong structural indicators
+            # Add filename indicators if available
+            if filename:
+                filename_indicators = self._analyze_filename(filename)
+                scheme_reasoning["structural_indicators"].extend(filename_indicators)
+                scheme_reasoning["confidence_factors"].append("Filename analysis included")
+            
+            scheme_reasoning["confidence_factors"].append("Scheme application priority override applied")
+            
+            return {
+                "document_type": "scheme_application",
+                "classification_confidence": min(scheme_score, 1.0),
+                "classification_reasoning": scheme_reasoning
+            }
+        
+        # Priority 1.6: Check for insurance priority override (higher priority than subsidy)
         insurance_score, insurance_reasoning = self._detect_insurance_priority(text_lower)
         subsidy_score, subsidy_reasoning = self._detect_subsidy_priority(text_lower)
         
@@ -310,6 +327,116 @@ class DocumentClassificationService:
             "classification_confidence": final_score,
             "classification_reasoning": reasoning
         }
+    
+    def _detect_scheme_application_priority(self, text_lower: str, filename: Optional[str] = None) -> Tuple[float, Dict[str, List[str]]]:
+        """Detect scheme application priority with strong structural indicators override"""
+        # Strong scheme application indicators that should override subsidy_claim
+        scheme_signals = [
+            # Very strong structural indicators
+            'scheme application form', 'application form', 'scheme name', 'request type',
+            'new scheme enrollment', 'scheme enrollment', 'beneficiary details', 'applicant details',
+            # Form structure indicators
+            'applicant name', 'father name', 'guardian name', 'aadhaar number', 'mobile number',
+            'village name', 'district', 'state', 'pin code', 'address',
+            # Agriculture-specific scheme fields
+            'land size', 'land area', 'cultivated area', 'soil type', 'crop pattern',
+            'irrigation facility', 'farm equipment', 'agricultural land',
+            # Scheme-specific terminology
+            'pradhan mantri', 'pm kisan', 'kisan samman nidhi', 'kisan credit card',
+            'paramparagat krishi', 'national mission', 'rkvy', 'mgnrega',
+            # Government scheme indicators
+            'government scheme', 'central scheme', 'state scheme', 'benefit scheme',
+            'financial assistance scheme', 'agricultural scheme', 'development scheme'
+        ]
+        
+        # Strong scheme application patterns
+        scheme_patterns = [
+            r'(?:scheme\s+application|application\s+form)',
+            r'(?:scheme\s+name|request\s+type)',
+            r'(?:new\s+scheme\s+enrollment|scheme\s+enrollment)',
+            r'(?:beneficiary\s+details|applicant\s+details)',
+            r'(?:applicant\s+name|father\s+name|guardian\s+name)',
+            r'(?:aadhaar\s+number|mobile\s+number)',
+            r'(?:village\s+name|district\s+name|state\s+name)',
+            r'(?:land\s+size|land\s+area|cultivated\s+area)',
+            r'(?:pradhan\s+mantri|pm\s+kisan)',
+            r'(?:kisan\s+samman|kisan\s+credit)',
+            r'(?:government\s+scheme|central\s+scheme)',
+            r'(?:financial\s+assistance\s+scheme|agricultural\s+scheme)'
+        ]
+        
+        # Initialize variables
+        keyword_matches = []
+        keyword_score = 0.0
+        
+        # Keyword matching with higher weight for structural indicators
+        for signal in scheme_signals:
+            if self._is_keyword_match_safe(signal, text_lower):
+                keyword_matches.append(signal)
+                # Count occurrences
+                occurrences = self._count_keyword_occurrences(signal, text_lower)
+                # Very high weight for structural indicators
+                if signal in ['scheme application form', 'application form', 'scheme name', 'request type']:
+                    keyword_score += occurrences * 0.5  # Very high weight
+                elif signal in ['applicant name', 'beneficiary details', 'land size', 'government scheme']:
+                    keyword_score += occurrences * 0.3  # High weight
+                else:
+                    keyword_score += occurrences * 0.2  # Normal weight
+        
+        # Pattern matching
+        pattern_matches = []
+        pattern_score = 0.0
+        
+        for pattern in scheme_patterns:
+            matches = re.findall(pattern, text_lower)
+            if matches:
+                pattern_matches.extend(matches)
+                pattern_score += len(matches) * 0.4
+        
+        # Calculate total scheme score
+        scheme_score = keyword_score + pattern_score
+        
+        # Build reasoning
+        confidence_factors = []
+        if keyword_matches:
+            confidence_factors.append(f"Found scheme application keywords: {', '.join(keyword_matches[:3])}")
+        if pattern_matches:
+            confidence_factors.append(f"Found scheme application patterns: {len(pattern_matches)} matches")
+        
+        # Strong boost for filename indicators
+        if filename and 'scheme_application' in filename.lower():
+            scheme_score += 0.3
+            confidence_factors.append("Filename indicates scheme application")
+        
+        # Boost for multiple structural indicators
+        structural_signals = ['scheme application form', 'application form', 'scheme name', 'request type', 'applicant name', 'beneficiary details']
+        structural_count = sum(1 for signal in structural_signals if signal in text_lower)
+        
+        if structural_count >= 2:
+            scheme_score += 0.25
+            confidence_factors.append("Multiple structural scheme application indicators detected")
+        
+        # Penalty for explicit subsidy indicators (to reduce misclassification)
+        explicit_subsidy_indicators = ['subsidy claim', 'subsidy application', 'subsidy request', 'reimbursement', 'drip irrigation', 'micro irrigation']
+        subsidy_count = sum(1 for indicator in explicit_subsidy_indicators if indicator in text_lower)
+        
+        if subsidy_count > 0 and structural_count >= 2:
+            # If we have strong structural indicators, ignore some subsidy signals
+            scheme_score += 0.1
+            confidence_factors.append("Strong scheme structure overrides subsidy signals")
+        elif subsidy_count > 0 and structural_count < 2:
+            # If weak structural signals but strong subsidy signals, penalize
+            scheme_score -= subsidy_count * 0.1
+            confidence_factors.append(f"Penalty for {subsidy_count} explicit subsidy indicators (weak scheme structure)")
+        
+        # Build reasoning structure
+        reasoning = {
+            "keywords_found": keyword_matches[:5],  # Limit to top 5
+            "structural_indicators": ["Scheme application structure detected"],
+            "confidence_factors": confidence_factors
+        }
+        
+        return min(scheme_score, 1.0), reasoning
     
     def _detect_subsidy_priority(self, text_lower: str) -> Tuple[float, Dict[str, List[str]]]:
         """Detect subsidy priority with strong signals override"""

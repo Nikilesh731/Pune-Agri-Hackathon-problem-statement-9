@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { MappedApplication } from '../../utils/applicationDetailMapper'
+import { MappedApplication, normalizePriorityScore } from '../../utils/applicationDetailMapper'
 import { SectionCard } from '../ui/SectionCard'
 import { StatusBadge } from '../ui/StatusBadge'
 import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline'
@@ -106,7 +106,7 @@ export function ApplicationSections({ application }: ApplicationSectionsProps) {
             )}
             {normalizedData.priorityScore !== undefined && (
               <div className="text-center p-3 bg-white rounded-lg border">
-                <div className="text-2xl font-bold text-gray-900">{Math.round(normalizedData.priorityScore)}</div>
+                <div className="text-2xl font-bold text-gray-900">{normalizePriorityScore(normalizedData.priorityScore)}%</div>
                 <div className="text-xs text-gray-600">Priority</div>
               </div>
             )}
@@ -324,7 +324,7 @@ export function ApplicationSections({ application }: ApplicationSectionsProps) {
             <div className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="p-3 bg-white rounded-lg border text-center">
-                  <div className="text-lg font-bold">{Math.round((normalizedData.mlInsights.priority_score || 0) * 100)}%</div>
+                  <div className="text-lg font-bold">{normalizePriorityScore(normalizedData.mlInsights.priority_score || 0)}%</div>
                   <div className="text-sm text-gray-600">Priority Score</div>
                 </div>
                 <div className="p-3 bg-white rounded-lg border text-center">
