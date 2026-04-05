@@ -298,8 +298,10 @@ class AIOrchestratorService {
         }
       }
       
-      // STEP 3: AI SERVICE PROCESSING
+      // STEP 3: AI SERVICE PROCESSING - AUTHORITATIVE DOCUMENT PROCESSING
       let documentProcessingResult: any;
+      let hasValidExtraction = false;
+      
       try {
         // Use correct payload format for metadata processing
         const payload = {
@@ -317,22 +319,37 @@ class AIOrchestratorService {
         documentProcessingResult = await aiOrchestratorRepository.callAIService('document-processing', payload)
         
       } catch (aiServiceError) {
-        console.error('[AI SERVICE] Call failed:', aiServiceError instanceof Error ? aiServiceError.message : aiServiceError);
+        console.error('[AI SERVICE] Document processing failed:', aiServiceError instanceof Error ? aiServiceError.message : aiServiceError);
+        
+        // Document processing itself failed - use full fallback
+        results.extractedData = {
+          document_type: 'unknown',
+          structured_data: {},
+          extracted_fields: {},
+          missing_fields: ["AI processing failed"],
+          confidence: 0,
+          reasoning: ["AI processing failed"],
+          classification_confidence: 0,
+          classification_reasoning: {},
+          risk_flags: [],
+          decision_support: {},
+          canonical: null
+        };
+        
+        results.aiProcessedAt = new Date();
+        results.aiProcessingStatus = 'failed';
         
         return {
           success: false,
           error: aiServiceError instanceof Error ? aiServiceError.message : 'AI service call failed',
-          data: {
-            aiProcessingStatus: 'failed',
-            aiProcessedAt: new Date()
-          },
+          data: results,
           processingTime: Date.now() - startTime,
           requestId,
           timestamp: new Date()
         };
       }
       
-      // STEP 4: DATA EXTRACTION AND CLEANUP
+      // STEP 4: DATA EXTRACTION AND VALIDATION - AUTHORITATIVE
       if (documentProcessingResult.success && documentProcessingResult.data) {
         try {
           // USE THE FROZEN AI RESPONSE CONTRACT
@@ -385,17 +402,49 @@ class AIOrchestratorService {
           };
           results.ocrProcessedAt = new Date();
           
+          // VALIDITY CHECK: Is this a real extraction result?
+          const docType = results.extractedData.document_type || '';
+          const hasStructuredData = Object.keys(structured_data).length > 0;
+          const hasExtractedFields = Object.keys(extracted_fields).length > 0;
+          const hasCanonical = canonicalData && typeof canonicalData === 'object';
+          
+          hasValidExtraction = (
+            docType && docType !== 'unknown' && docType.trim() !== '' ||
+            hasStructuredData ||
+            hasExtractedFields ||
+            hasCanonical
+          );
+          
+          if (hasValidExtraction) {
+            console.log('[AI] document-processing success - valid extraction preserved');
+          } else {
+            console.log('[AI] document-processing returned invalid data - using fallback');
+            results.extractedData = {
+              document_type: 'unknown',
+              structured_data: {},
+              extracted_fields: {},
+              missing_fields: ['AI processing failed'],
+              confidence: 0,
+              reasoning: ['AI processing failed'],
+              classification_confidence: 0,
+              classification_reasoning: {},
+              risk_flags: [],
+              decision_support: {},
+              canonical: null
+            };
+          }
+          
         } catch (extractionError) {
           console.error('[DATA EXTRACTION] Failed:', extractionError instanceof Error ? extractionError.message : extractionError);
           
-          // Don't throw - continue with empty results but log the failure
+          // Extraction processing failed - use fallback
           results.extractedData = {
             document_type: 'unknown',
             structured_data: {},
             extracted_fields: {},
             missing_fields: ['AI processing failed'],
             confidence: 0,
-            reasoning: [],
+            reasoning: ['AI processing failed'],
             classification_confidence: 0,
             classification_reasoning: {},
             risk_flags: [],
@@ -404,10 +453,26 @@ class AIOrchestratorService {
           };
         }
       } else {
-        console.log('[AI SERVICE] Returned no data or failed');
+        console.log('[AI SERVICE] Document processing returned no data or failed');
+        // Document processing failed - use fallback
+        results.extractedData = {
+          document_type: 'unknown',
+          structured_data: {},
+          extracted_fields: {},
+          missing_fields: ['AI processing failed'],
+          confidence: 0,
+          reasoning: ['AI processing failed'],
+          classification_confidence: 0,
+          classification_reasoning: {},
+          risk_flags: [],
+          decision_support: {},
+          canonical: null
+        };
       }
       
-      // Step 2: Enhanced Intelligence Summary using our intelligence service
+      // STEP 5: DOWNSTREAM AI SERVICES - ISOLATED FAILURES
+      
+      // Step 5.1: Enhanced Intelligence Summary - ISOLATED
       if (ocrText && ocrText.trim().length > 0) {
         try {
           // Use document processing service with intelligence service for enhanced summary
@@ -427,63 +492,74 @@ class AIOrchestratorService {
             results.aiSummary = intelligenceResult.data.summary
           }
         } catch (intelligenceError) {
-          console.warn('Enhanced intelligence service unavailable, using fallback:', intelligenceError instanceof Error ? intelligenceError.message : intelligenceError);
+          console.warn('[AI] summarization failed, continuing:', intelligenceError instanceof Error ? intelligenceError.message : intelligenceError);
           // Use safe fallback summary format
           const documentType = results.extractedData?.canonical?.document_type || results.extractedData?.document_type || 'unknown';
           results.aiSummary = `Document processed as ${documentType.replace('_', ' ')}. Review extracted fields for verification.`;
         }
       }
       
-      // Step 3: Priority Scoring - USE FROZEN CONTRACT FIELDS
-      const hasMissingDocuments = (results.extractedData?.missing_fields?.length || 0) > 0;
-      const documentCompleteness = results.extractedData?.confidence || 0;
-      const applicationType = 
-        results.extractedData?.canonical?.document_type ||
-        results.extractedData?.document_type || 
-        'general';
-      const rawExtractedText = results.extractedData?.reasoning?.join(' ') || ocrText || '';
-      
-      const priorityResult = await aiOrchestratorRepository.callAIService('application-priority-scoring', {
-        application_data: {
-          applicationType: applicationType,
-          submissionDate: new Date().toISOString(),
-          hasMissingDocuments: hasMissingDocuments,
-          documentCompleteness: documentCompleteness,
-          rawExtractedText: rawExtractedText
-        },
-        scoring_criteria: ['urgency', 'impact', 'compliance', 'farmer_vulnerability']
-      })
-      
-      if (priorityResult.success) {
-        results.priorityScore = ((priorityResult.data?.priority_score ?? 0.5) * 100)
+      // Step 5.2: Priority Scoring - ISOLATED
+      try {
+        const hasMissingDocuments = (results.extractedData?.missing_fields?.length || 0) > 0;
+        const documentCompleteness = results.extractedData?.confidence || 0;
+        const applicationType = 
+          results.extractedData?.canonical?.document_type ||
+          results.extractedData?.document_type || 
+          'general';
+        const rawExtractedText = results.extractedData?.reasoning?.join(' ') || ocrText || '';
+        
+        const priorityResult = await aiOrchestratorRepository.callAIService('application-priority-scoring', {
+          application_data: {
+            applicationType: applicationType,
+            submissionDate: new Date().toISOString(),
+            hasMissingDocuments: hasMissingDocuments,
+            documentCompleteness: documentCompleteness,
+            rawExtractedText: rawExtractedText
+          },
+          scoring_criteria: ['urgency', 'impact', 'compliance', 'farmer_vulnerability']
+        })
+        
+        if (priorityResult.success) {
+          results.priorityScore = ((priorityResult.data?.priority_score ?? 0.5) * 100)
+        }
+      } catch (priorityError) {
+        console.warn('[AI] priority scoring failed, continuing:', priorityError instanceof Error ? priorityError.message : priorityError);
+        results.priorityScore = 50; // Safe default
       }
       
-      // Step 4: Fraud Detection - USE STRUCTURED_DATA ONLY
-      const sd = results.extractedData?.structured_data || {};
-      
-      const fraudResult = await aiOrchestratorRepository.callAIService('fraud-detection', {
-        farmer_name: sd.farmer_name,
-        aadhaar_number: sd.aadhaar_number,
-        land_size: sd.land_size,
-        applicantInfo: {
-          name: sd.farmer_name,
-          aadhaarNumber: sd.aadhaar_number,
-          location: sd.location
-        },
-        applicationData: results.extractedData,
-        documentMetadata: {
-          fileName: input.fileName,
-          fileType: input.fileType
-        },
-        documents: []
-      })
-      
-      if (fraudResult.success) {
-        results.fraudRiskScore = fraudResult.data?.fraud_score ?? 0.1
-        results.fraudFlags = fraudResult.data?.indicators || []
+      // Step 5.3: Fraud Detection - ISOLATED
+      try {
+        const sd = results.extractedData?.structured_data || {};
+        
+        const fraudResult = await aiOrchestratorRepository.callAIService('fraud-detection', {
+          farmer_name: sd.farmer_name,
+          aadhaar_number: sd.aadhaar_number,
+          land_size: sd.land_size,
+          applicantInfo: {
+            name: sd.farmer_name,
+            aadhaarNumber: sd.aadhaar_number,
+            location: sd.location
+          },
+          applicationData: results.extractedData,
+          documentMetadata: {
+            fileName: input.fileName,
+            fileType: input.fileType
+          },
+          documents: []
+        })
+        
+        if (fraudResult.success) {
+          results.fraudRiskScore = fraudResult.data?.fraud_score ?? 0.1
+          results.fraudFlags = fraudResult.data?.indicators || []
+        }
+      } catch (fraudError) {
+        console.warn('[AI] fraud detection failed, continuing:', fraudError instanceof Error ? fraudError.message : fraudError);
+        results.fraudRiskScore = 0; // Safe default
+        results.fraudFlags = []; // Safe default
       }
       
-      // Step 5: Verification Recommendation - USE FROZEN CONTRACT FIELDS
+      // STEP 6: FINAL VERIFICATION AND RESPONSE
       const hasMissingFields = (results.extractedData?.missing_fields?.length || 0) > 0;
       const confidence = results.extractedData?.confidence || 0;
       
@@ -498,8 +574,15 @@ class AIOrchestratorService {
       results.aiProcessedAt = new Date()
       results.aiProcessingStatus = 'completed'
       
+      // Determine success based on document processing, not downstream services
+      const overallSuccess = hasValidExtraction || results.extractedData?.document_type !== 'unknown';
+      
+      if (overallSuccess) {
+        console.log('[AI] returning preserved extraction result');
+      }
+      
       return {
-        success: true,
+        success: overallSuccess,
         data: results,
         processingTime: Date.now() - startTime,
         requestId,
