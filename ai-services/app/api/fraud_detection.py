@@ -22,6 +22,7 @@ def detect_fraud(application_data: Dict[str, Any]) -> Dict[str, Any]:
         Fraud score, risk level, and indicators
     """
     try:
+        logger.info("[FRAUD] request received")
         logger.info("Fraud detection started")
         
         # Simple fraud detection logic for demo
@@ -106,7 +107,7 @@ def detect_fraud(application_data: Dict[str, Any]) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"Error in fraud detection: {str(e)}")
+        logger.error(f"[FRAUD] processing failed, returning safe fallback: {str(e)}")
         # NEVER allow exception to bubble up - always return valid response
         return {
             "success": True,

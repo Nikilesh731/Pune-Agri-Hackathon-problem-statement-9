@@ -487,6 +487,7 @@ class AIOrchestratorService {
       }
       
       // Step 3.3: Fraud Detection - ISOLATED
+      console.log('[AI] fraud detection started');
       try {
         const sd = results.extractedData?.structured_data || {};
         
@@ -513,7 +514,7 @@ class AIOrchestratorService {
         }
         
       } catch (fraudError) {
-        console.warn('[AI] fraud detection failed, continuing:', fraudError instanceof Error ? fraudError.message : fraudError);
+        console.log('[AI] fraud detection failed, continuing');
         results.fraudRiskScore = 0; // Safe default
         results.fraudFlags = []; // Safe default
       }
