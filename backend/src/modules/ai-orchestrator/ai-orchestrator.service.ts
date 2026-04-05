@@ -5,10 +5,6 @@
 
 import { aiOrchestratorRepository } from './ai-orchestrator.repository'
 import { AIResponse } from './ai-orchestrator.types'
-import { CanonicalAgricultureData } from '../applications/applications.types'
-import { supabase } from '../../config/supabase'
-const { PDFParse } = require('pdf-parse')
-import Tesseract from 'tesseract.js'
 
 interface ProcessDocumentInput {
   fileUrl?: string
@@ -17,7 +13,6 @@ interface ProcessDocumentInput {
 }
 
 class AIOrchestratorService {
-
   async processDocument(input: ProcessDocumentInput): Promise<AIResponse> {
     const startTime = Date.now()
     const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -37,20 +32,23 @@ class AIOrchestratorService {
 
       console.log('[AI DEBUG] Payload:', payload)
 
-      const documentProcessingResult =
-        await aiOrchestratorRepository.callAIService(
-          'document-processing',
-          payload
-        )
+      const documentProcessingResult = await aiOrchestratorRepository.callAIService(
+        'document-processing',
+        payload
+      )
 
       console.log(
         '[AI DEBUG] document-processing response:',
         JSON.stringify(documentProcessingResult)
       )
 
-      // ✅ CRITICAL FIX: handle response properly
+      // IMPORTANT:
+      // Repository returns { success, data, error } and does not throw for normal service failures.
       if (!documentProcessingResult?.success || !documentProcessingResult?.data) {
-        console.error('[AI] document-processing failed')
+        console.error(
+          '[AI] document-processing failed or returned empty data:',
+          documentProcessingResult?.error || 'Unknown error'
+        )
 
         return {
           success: false,
@@ -65,89 +63,137 @@ class AIOrchestratorService {
         }
       }
 
-      // ✅ ALWAYS preserve AI output
+      // Preserve authoritative extraction immediately
       results.extractedData = documentProcessingResult.data
-
       console.log('[AI] extraction SUCCESS')
 
-      // ===============================
-      // OPTIONAL: Summarization
-      // ===============================
+      // Optional: Summarization
       try {
-        const intelligenceResult =
-          await aiOrchestratorRepository.callAIService('summarization', {
-            processing_type: 'full_process',
-            options: {
-              filename: input.fileName,
-              extractedData: results.extractedData,
-            },
-          })
+        const documentType =
+          results.extractedData?.canonical?.document_type ||
+          results.extractedData?.document_type ||
+          'unknown'
 
-        if (intelligenceResult.success) {
-          results.aiSummary =
-            intelligenceResult.data?.summary ||
-            intelligenceResult.data?.extractedData?.summary ||
-            ''
+        const intelligenceResult = await aiOrchestratorRepository.callAIService('summarization', {
+          processing_type: 'full_process',
+          options: {
+            filename: input.fileName,
+            extractedData: results.extractedData,
+          },
+        })
+
+        if (intelligenceResult.success && intelligenceResult.data?.extractedData?.summary) {
+          results.aiSummary = intelligenceResult.data.extractedData.summary
+        } else if (intelligenceResult.success && intelligenceResult.data?.summary) {
+          results.aiSummary = intelligenceResult.data.summary
+        } else {
+          results.aiSummary = `Document processed as ${documentType.replace('_', ' ')}. Review extracted fields for verification.`
         }
-      } catch (e) {
-        console.warn('[AI] summarization failed (ignored)')
+      } catch (intelligenceError) {
+        console.warn(
+          '[AI] summarization failed, continuing:',
+          intelligenceError instanceof Error ? intelligenceError.message : intelligenceError
+        )
+
+        const documentType =
+          results.extractedData?.canonical?.document_type ||
+          results.extractedData?.document_type ||
+          'unknown'
+
+        results.aiSummary = `Document processed as ${documentType.replace('_', ' ')}. Review extracted fields for verification.`
       }
 
-      // ===============================
-      // OPTIONAL: Priority
-      // ===============================
+      // Optional: Priority scoring
       try {
-        const priorityResult =
-          await aiOrchestratorRepository.callAIService(
-            'application-priority-scoring',
-            {
-              application_data: {
-                extractedData: results.extractedData,
-              },
-              scoring_criteria: ['urgency', 'impact'],
-            }
-          )
+        const hasMissingDocuments = (results.extractedData?.missing_fields?.length || 0) > 0
+        const documentCompleteness = results.extractedData?.confidence || 0
+        const applicationType =
+          results.extractedData?.canonical?.document_type ||
+          results.extractedData?.document_type ||
+          'general'
+
+        const priorityResult = await aiOrchestratorRepository.callAIService(
+          'application-priority-scoring',
+          {
+            application_data: {
+              applicationType,
+              submissionDate: new Date().toISOString(),
+              hasMissingDocuments,
+              documentCompleteness,
+              extractedData: results.extractedData,
+            },
+            scoring_criteria: ['urgency', 'impact', 'compliance', 'farmer_vulnerability'],
+          }
+        )
 
         if (priorityResult.success) {
-          results.priorityScore =
-            (priorityResult.data?.priority_score ?? 0.5) * 100
+          results.priorityScore = (priorityResult.data?.priority_score ?? 0.5) * 100
         } else {
           results.priorityScore = 50
         }
-      } catch {
+      } catch (priorityError) {
+        console.warn(
+          '[AI] priority scoring failed, continuing:',
+          priorityError instanceof Error ? priorityError.message : priorityError
+        )
         results.priorityScore = 50
       }
 
-      // ===============================
-      // OPTIONAL: Fraud
-      // ===============================
+      // Optional: Fraud detection
       try {
+        console.log('[AI] fraud detection started')
+
         const sd = results.extractedData?.structured_data || {}
 
-        const fraudResult =
-          await aiOrchestratorRepository.callAIService('fraud-detection', {
-            farmer_name: sd.farmer_name,
-            aadhaar_number: sd.aadhaar_number,
-            extractedData: results.extractedData,
-          })
+        const fraudResult = await aiOrchestratorRepository.callAIService('fraud-detection', {
+          farmer_name: sd.farmer_name,
+          aadhaar_number: sd.aadhaar_number,
+          land_size: sd.land_size,
+          applicantInfo: {
+            name: sd.farmer_name,
+            aadhaarNumber: sd.aadhaar_number,
+            location: sd.location,
+          },
+          applicationData: results.extractedData,
+          documentMetadata: {
+            fileName: input.fileName,
+            fileType: input.fileType,
+          },
+          documents: [],
+        })
 
         if (fraudResult.success) {
-          results.fraudRiskScore = fraudResult.data?.fraud_score ?? 0
+          results.fraudRiskScore = fraudResult.data?.fraud_score ?? 0.1
           results.fraudFlags = fraudResult.data?.indicators || []
         } else {
+          console.warn('[AI] fraud detection failed, continuing:', fraudResult.error)
           results.fraudRiskScore = 0
           results.fraudFlags = []
         }
-      } catch {
+      } catch (fraudError) {
+        console.warn(
+          '[AI] fraud detection failed, continuing:',
+          fraudError instanceof Error ? fraudError.message : fraudError
+        )
         results.fraudRiskScore = 0
         results.fraudFlags = []
       }
 
-      // ===============================
-      // FINAL RESPONSE
-      // ===============================
-      results.aiProcessingStatus = 'completed'
+      const hasMissingFields = (results.extractedData?.missing_fields?.length || 0) > 0
+      const confidence = results.extractedData?.confidence || 0
+
+      const verificationRecommendation = this.generateVerificationRecommendation({
+        hasMissingFields,
+        fraudRiskScore: results.fraudRiskScore || 0,
+        priorityScore: results.priorityScore || 50,
+        confidence,
+      })
+
+      results.verificationRecommendation = verificationRecommendation.recommendation
       results.aiProcessedAt = new Date()
+      results.aiProcessingStatus = 'completed'
+
+      console.log('[AI] returning preserved extraction result')
 
       return {
         success: true,
@@ -173,6 +219,74 @@ class AIOrchestratorService {
         timestamp: new Date(),
       }
     }
+  }
+
+  private generateVerificationRecommendation(context: {
+    hasMissingFields: boolean
+    fraudRiskScore: number
+    priorityScore: number
+    confidence: number
+  }): { recommendation: string } {
+    const { hasMissingFields, fraudRiskScore, priorityScore, confidence } = context
+
+    if (fraudRiskScore > 0.7) {
+      return { recommendation: 'HIGH_RISK_MANUAL_REVIEW' }
+    }
+
+    if (hasMissingFields || confidence < 0.6) {
+      return { recommendation: 'NEEDS_CLARIFICATION' }
+    }
+
+    if (fraudRiskScore > 0.4) {
+      return { recommendation: 'MANUAL_VERIFICATION_REQUIRED' }
+    }
+
+    if (priorityScore > 80) {
+      return { recommendation: 'EXPEDITED_REVIEW' }
+    }
+
+    return { recommendation: 'APPROVE_FOR_REVIEW' }
+  }
+
+  async classifyGrievance(text: string, includeSentiment?: boolean): Promise<AIResponse> {
+    return await aiOrchestratorRepository.callAIService('grievance-classification', {
+      text,
+      includeSentiment,
+    })
+  }
+
+  async scoreApplication(applicationData: any, scoringModel?: string): Promise<AIResponse> {
+    return await aiOrchestratorRepository.callAIService('application-priority-scoring', {
+      application_data: applicationData,
+      scoring_criteria: ['urgency', 'impact', 'compliance', 'farmer_vulnerability'],
+    })
+  }
+
+  async detectFraud(data: any, analysisType?: string): Promise<AIResponse> {
+    return await aiOrchestratorRepository.callAIService('fraud-detection', {
+      application_data: data,
+      documents: [],
+    })
+  }
+
+  async summarizeText(text: string, summaryType?: string, maxLength?: number): Promise<AIResponse> {
+    return await aiOrchestratorRepository.callAIService('summarization', {
+      text,
+      summaryType,
+      maxLength,
+    })
+  }
+
+  async getAvailableModels(): Promise<any> {
+    return await aiOrchestratorRepository.getAvailableModels()
+  }
+
+  async getAIHealth(): Promise<any> {
+    return await aiOrchestratorRepository.getAIHealth()
+  }
+
+  async healthCheck(): Promise<{ message: string }> {
+    return { message: 'AI orchestrator service working' }
   }
 }
 
