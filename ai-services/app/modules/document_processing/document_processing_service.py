@@ -1411,14 +1411,17 @@ class DocumentProcessingService:
     def _extract_text_from_file(self, file_content: bytes, filename: str) -> str:
         """
         Unified text extraction from file based on type
-        Supports: PDF, Images (JPG/PNG), DOCX, DOC, TXT
+        Supports: PDF, Images (JPG/PNG), DOCX, TXT
         
         Args:
             file_content: Raw file bytes
             filename: Original filename for type detection
             
         Returns:
-            Clean extracted text (never null)
+            Clean extracted text (never empty)
+            
+        Raises:
+            ValueError: If extraction fails or returns empty text
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -1427,24 +1430,41 @@ class DocumentProcessingService:
         file_extension = filename.lower().split('.')[-1] if '.' in filename.lower() else ''
         logger.info(f"[EXTRACT] File type detected: {file_extension}")
         
+        # Handle .doc files explicitly with error
+        if file_extension == 'doc':
+            raise ValueError("Legacy .doc files are not supported. Please upload PDF, DOCX, or image.")
+        
         try:
+            text = ""
+            
             if file_extension == 'pdf':
-                return self._extract_text_from_pdf(file_content).strip()
+                text = self._extract_text_from_pdf(file_content)
             elif file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp']:
-                return self._extract_text_from_image(file_content).strip()
+                text = self._extract_text_from_image(file_content)
             elif file_extension == 'docx':
-                return self._extract_text_from_docx(file_content).strip()
-            elif file_extension == 'doc':
-                return self._extract_text_from_doc(file_content).strip()
+                text = self._extract_text_from_docx(file_content)
             elif file_extension in ['txt', 'text']:
-                return self._extract_text_from_text_file(file_content).strip()
+                text = self._extract_text_from_text_file(file_content)
             else:
-                logger.warning(f"[EXTRACT] Unsupported file type: {file_extension}")
-                return ""
+                raise ValueError(f"Unsupported file type: {file_extension}")
+            
+            # Normalize text
+            text = (text or "").strip()
+            
+            # Strong validation - fail if empty
+            if not text:
+                raise ValueError("Extraction returned empty text")
+            
+            # For images, check for insufficient text
+            if file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp'] and len(text) < 10:
+                raise ValueError("Extraction returned insufficient text")
+            
+            return text
+            
         except Exception as e:
             logger.error(f"[EXTRACT] Extraction error for {file_extension}: {e}")
-            # Return empty string instead of raising to prevent pipeline failure
-            return ""
+            # Always raise - no silent fallback
+            raise ValueError(f"Text extraction failed: {str(e)}")
     
     def _extract_text_from_pdf(self, file_content: bytes) -> str:
         """Extract text from PDF bytes using pdfplumber"""
@@ -1535,40 +1555,6 @@ class DocumentProcessingService:
             logger.error(f"[EXTRACT] DOCX extraction failed: {e}")
             return ""
     
-    def _extract_text_from_doc(self, file_content: bytes) -> str:
-        """Extract text from DOC bytes using textract"""
-        import logging
-        logger = logging.getLogger(__name__)
-        
-        try:
-            import textract
-            import tempfile
-            import os
-            
-            # Create a temporary file
-            with tempfile.NamedTemporaryFile(suffix='.doc', delete=False) as temp_file:
-                temp_file.write(file_content)
-                temp_file_path = temp_file.name
-            
-            try:
-                # Extract text using textract
-                extracted_text = textract.process(temp_file_path).decode('utf-8')
-                logger.info(f"[EXTRACT] DOC extraction complete: {len(extracted_text)} chars")
-                return extracted_text.strip()
-            finally:
-                # Clean up temporary file
-                try:
-                    os.unlink(temp_file_path)
-                except OSError:
-                    pass
-            
-        except ImportError:
-            logger.error("[EXTRACT] textract not installed, cannot extract from DOC")
-            return ""
-        except Exception as e:
-            logger.error(f"[EXTRACT] DOC extraction failed: {e}")
-            return ""
-
     def _extract_text_from_image(self, file_content: bytes) -> str:
         """Extract text from image bytes using OCR"""
         import logging
