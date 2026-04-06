@@ -5,6 +5,9 @@ Purpose: Initialize and configure the AI services microservice
 
 import logging
 import os
+import socket
+
+import uvicorn
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -92,4 +95,40 @@ app.include_router(
     prefix="/api/fraud-detection",
     tags=["Fraud Detection"],
 )
+
+
+def _is_port_available(port: int, host: str = "127.0.0.1") -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return sock.connect_ex((host, port)) != 0
+
+
+def _suggest_available_ports(preferred_port: int) -> list[int]:
+    suggestions = []
+    for candidate_port in (8001, 8002):
+        if candidate_port != preferred_port and _is_port_available(candidate_port):
+            suggestions.append(candidate_port)
+    return suggestions
+
+
+def run_server() -> None:
+    host = os.getenv("HOST", "0.0.0.0")
+    preferred_port = int(os.getenv("PORT", "8000"))
+    reload_enabled = os.getenv("RELOAD", "false").lower() == "true"
+
+    if not _is_port_available(preferred_port):
+        suggestions = _suggest_available_ports(preferred_port)
+        if suggestions:
+            logger.warning(
+                f"[STARTUP] Port {preferred_port} is already in use. Try {', '.join(str(port) for port in suggestions)}."
+            )
+            preferred_port = suggestions[0]
+        else:
+            logger.warning(f"[STARTUP] Port {preferred_port} is already in use and no fallback port is currently free.")
+
+    uvicorn.run("app.main:app", host=host, port=preferred_port, reload=reload_enabled)
+
+
+if __name__ == "__main__":
+    run_server()
 

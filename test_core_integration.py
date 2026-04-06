@@ -13,19 +13,10 @@ import sys
 import asyncio
 import logging
 
-# Add AI services path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'ai-services'))
-sys.path.append(os.path.join(os.path.dirname(__file__), 'ai-services', 'app'))
-
 try:
     from app.modules.document_processing.document_processing_service import DocumentProcessingService
 except ImportError:
-    try:
-        from ai_services.app.modules.document_processing.document_processing_service import DocumentProcessingService
-    except ImportError:
-        # Direct import as last resort
-        sys.path.append(os.path.join(os.path.dirname(__file__), 'ai-services', 'app', 'modules', 'document_processing'))
-        from document_processing_service import DocumentProcessingService
+    from app.modules.document_processing.document_processing_service import DocumentProcessingService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

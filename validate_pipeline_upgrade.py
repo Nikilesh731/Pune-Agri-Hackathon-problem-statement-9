@@ -7,9 +7,6 @@ Quick check that all new components are syntactically correct and can be importe
 import sys
 import os
 
-# Add ai-services to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'ai-services'))
-
 def validate_imports():
     """Test that all new modules can be imported"""
     print("=" * 60)
@@ -98,7 +95,7 @@ def validate_imports():
     
     # Test 7: Enhanced ML Service
     try:
-        from ml.ml_service import MLService
+        from app.ml.ml_service import MLService
         ml = MLService()
         print("✅ Test 7: ML Service (Enhanced) - PASS")  
         # Check for new method

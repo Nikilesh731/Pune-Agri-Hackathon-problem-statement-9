@@ -9,10 +9,7 @@ import sys
 from typing import Dict, Any, Optional
 import logging
 
-# Add parent directory to path for imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from ml.train_model import get_model, predict_risk
+from app.ml.train_model import get_model, predict_risk
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

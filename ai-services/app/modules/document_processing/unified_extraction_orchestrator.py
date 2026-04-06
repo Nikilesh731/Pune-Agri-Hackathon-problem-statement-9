@@ -12,13 +12,13 @@ reliable, schema-validated output
 """
 
 from typing import Dict, List, Optional, Any, Set
-from .document_schemas import DocumentSchema, get_schema, FieldSchema, FieldType, DOCUMENT_SCHEMAS
-from .candidate_extraction_engine import (
+from app.modules.document_processing.document_schemas import DocumentSchema, get_schema, FieldSchema, FieldType, DOCUMENT_SCHEMAS
+from app.modules.document_processing.candidate_extraction_engine import (
     CandidateExtractionEngine, ExtractionCandidate, CandidateSource, ValidationStatus
 )
-from .semantic_extractor import SemanticExtractor
-from .extraction_service import DocumentExtractionService
-from .reasoning_engine import ReasoningEngine
+from app.modules.document_processing.semantic_extractor import SemanticExtractor
+from app.modules.document_processing.extraction_service import DocumentExtractionService
+from app.modules.document_processing.reasoning_engine import ReasoningEngine
 import logging
 
 

@@ -12,7 +12,6 @@ import base64
 from pathlib import Path
 
 # Add the AI services path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'ai-services'))
 
 def test_file_type_detection():
     """Test file type detection in backend service"""
@@ -43,7 +42,7 @@ def test_file_type_detection():
         else:
             detected = 'unknown'
         
-        status = "✅" if detected == expected else "❌"
+        status = "âœ…" if detected == expected else "âŒ"
         print(f"{status} {filename} ({mime_type}) -> {detected} (expected: {expected})")
 
 def test_unified_extraction_interface():
@@ -81,7 +80,7 @@ def test_unified_extraction_interface():
     
     for filename in test_files:
         result = extract_text(b"dummy_content", filename)
-        status = "✅" if result else "❌"
+        status = "âœ…" if result else "âŒ"
         print(f"{status} {filename} -> '{result[:50]}...'")
 
 def test_pipeline_consistency():
@@ -143,7 +142,7 @@ def test_pipeline_consistency():
     for file_type in file_types:
         result = simulate_pipeline(file_type, "Sample extracted text content")
         steps = result["pipeline_steps"]
-        status = "✅" if len(steps) == 5 else "❌"
+        status = "âœ…" if len(steps) == 5 else "âŒ"
         print(f"{status} {file_type} -> {len(steps)} pipeline steps: {', '.join(steps)}")
 
 def test_duplicate_detection_compatibility():
@@ -177,9 +176,9 @@ def test_duplicate_detection_compatibility():
     for fmt, content in formats:
         hash_val = generate_content_hash(content, fmt)
         hashes[fmt] = hash_val
-        print(f"📝 {fmt.upper()}: {hash_val}")
+        print(f"ðŸ“ {fmt.upper()}: {hash_val}")
     
-    print("✅ Cross-format duplicate detection enabled through normalized content hashing")
+    print("âœ… Cross-format duplicate detection enabled through normalized content hashing")
 
 def test_precreate_support():
     """Test pre-create content hash generation"""
@@ -218,12 +217,12 @@ def test_precreate_support():
     
     for file_type in ["pdf", "docx", "doc", "jpg"]:
         content_hash = simulate_precreate(file_type, extracted_data)
-        status = "✅" if content_hash else "❌"
+        status = "âœ…" if content_hash else "âŒ"
         print(f"{status} {file_type} pre-create hash: {content_hash}")
 
 def main():
     """Run all tests"""
-    print("🚀 Testing Extended Document Support Implementation")
+    print("ðŸš€ Testing Extended Document Support Implementation")
     print("=" * 60)
     
     test_file_type_detection()
@@ -233,16 +232,16 @@ def main():
     test_precreate_support()
     
     print("\n" + "=" * 60)
-    print("✅ Extended Document Support Test Complete")
+    print("âœ… Extended Document Support Test Complete")
     print("\nSUMMARY:")
-    print("- ✅ Unified text extraction layer implemented")
-    print("- ✅ Support for PDF, Images, DOC, DOCX added")
-    print("- ✅ All file types follow same pipeline after extraction")
-    print("- ✅ Cross-format duplicate detection enabled")
-    print("- ✅ Pre-create support implemented")
-    print("\n🎯 OBJECTIVE ACHIEVED:")
+    print("- âœ… Unified text extraction layer implemented")
+    print("- âœ… Support for PDF, Images, DOC, DOCX added")
+    print("- âœ… All file types follow same pipeline after extraction")
+    print("- âœ… Cross-format duplicate detection enabled")
+    print("- âœ… Pre-create support implemented")
+    print("\nðŸŽ¯ OBJECTIVE ACHIEVED:")
     print("   All non-PDF documents behave EXACTLY like PDF by:")
-    print("   1. Converting non-PDF documents → TEXT")
+    print("   1. Converting non-PDF documents â†’ TEXT")
     print("   2. Feeding that TEXT into existing PDF pipeline")
 
 if __name__ == "__main__":

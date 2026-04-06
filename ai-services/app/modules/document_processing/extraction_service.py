@@ -2,16 +2,21 @@
 Document Extraction Service
 Purpose: Main handler-dispatch service for document extraction
 """
-import importlib
 from typing import Dict, List, Optional, Any
 
-from .utils import normalize_ocr_text, safe_float
-from .generic_extractor import GenericFieldExtractor
-from .classification_service import DocumentClassificationService
-from .semantic_extractor import SemanticExtractor
-from .field_filter import FieldFilter
-from .reasoning_engine import ReasoningEngine
-from .predictive_analytics import PredictiveAnalytics
+from app.modules.document_processing.handlers.farmer_record_handler import FarmerRecordHandler
+from app.modules.document_processing.handlers.grievance_handler import GrievanceHandler
+from app.modules.document_processing.handlers.insurance_claim_handler import InsuranceClaimHandler
+from app.modules.document_processing.handlers.scheme_application_handler import SchemeApplicationHandler
+from app.modules.document_processing.handlers.subsidy_claim_handler import SubsidyClaimHandler
+from app.modules.document_processing.handlers.supporting_document_handler import SupportingDocumentHandler
+from app.modules.document_processing.utils import normalize_ocr_text, safe_float
+from app.modules.document_processing.generic_extractor import GenericFieldExtractor
+from app.modules.document_processing.classification_service import DocumentClassificationService
+from app.modules.document_processing.semantic_extractor import SemanticExtractor
+from app.modules.document_processing.field_filter import FieldFilter
+from app.modules.document_processing.reasoning_engine import ReasoningEngine
+from app.modules.document_processing.predictive_analytics import PredictiveAnalytics
 import re
 
 
@@ -65,40 +70,19 @@ class DocumentExtractionService:
         return handler
     
     def _import_handler(self, document_type: str):
-        """Import handler with safer importlib approach"""
-        handler_files = {
-            'scheme_application': 'scheme_application_handler',
-            'farmer_record': 'farmer_record_handler',
-            'grievance': 'grievance_handler',
-            'insurance_claim': 'insurance_claim_handler',
-            'subsidy_claim': 'subsidy_claim_handler',
-            'supporting_document': 'supporting_document_handler',
-            'unknown': 'supporting_document_handler'
+        """Return a handler instance for the requested document type"""
+        handler_map = {
+            'scheme_application': SchemeApplicationHandler,
+            'farmer_record': FarmerRecordHandler,
+            'grievance': GrievanceHandler,
+            'insurance_claim': InsuranceClaimHandler,
+            'subsidy_claim': SubsidyClaimHandler,
+            'supporting_document': SupportingDocumentHandler,
+            'unknown': SupportingDocumentHandler,
         }
-        
-        handler_classes = {
-            'scheme_application': 'SchemeApplicationHandler',
-            'farmer_record': 'FarmerRecordHandler',
-            'grievance': 'GrievanceHandler',
-            'insurance_claim': 'InsuranceClaimHandler',
-            'subsidy_claim': 'SubsidyClaimHandler',
-            'supporting_document': 'SupportingDocumentHandler',
-            'unknown': 'SupportingDocumentHandler'
-        }
-        
-        module_file = handler_files.get(document_type, 'supporting_document_handler')
-        class_name = handler_classes.get(document_type, 'SupportingDocumentHandler')
-        
-        # Import using importlib for better error handling
-        try:
-            module = importlib.import_module(f'app.modules.document_processing.handlers.{module_file}')
-            handler_class = getattr(module, class_name)
-            return handler_class()
-        except ImportError:
-            # Try relative import as fallback
-            module = importlib.import_module(f'.handlers.{module_file}', package=__package__)
-            handler_class = getattr(module, class_name)
-            return handler_class()
+
+        handler_class = handler_map.get(document_type, SupportingDocumentHandler)
+        return handler_class()
     
     def _create_fallback_handler(self):
         """Create minimal fallback handler with useful debugging info"""

@@ -28,13 +28,12 @@ transformers==4.38.2
 pdfplumber==0.10.3
 PyMuPDF==1.23.26
 
+# Docling for document ingestion and conversion
+docling>=2.0.0
+
 # Document processing for Word documents
 python-docx==1.1.0
 
-# PaddleOCR for image OCR (CPU inference) - CONTAINER COMPATIBLE VERSIONS
-# Use headless versions and specific versions to avoid GUI library dependencies
-paddlepaddle==2.6.1
-paddleocr==2.7.3
-# Alternative: If PaddleOCR continues to fail, uncomment these lines and comment out paddleocr above
-# easyocr==1.7.1  # Fallback OCR engine that works better in containers
-# pytesseract==0.3.10  # Keep as legacy fallback
+# OCR processing - Tesseract only (production-safe)
+pytesseract==0.3.10
+opencv-python-headless==4.9.0.80  # Headless version for container environments

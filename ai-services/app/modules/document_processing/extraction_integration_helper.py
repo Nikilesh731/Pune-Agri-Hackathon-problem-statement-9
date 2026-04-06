@@ -11,9 +11,9 @@ ensuring that:
 """
 
 from typing import Dict, Any, Optional
-from .unified_extraction_orchestrator import UnifiedExtractionOrchestrator
-from .money_extraction_validator import MoneyExtractionValidator
-from .document_schemas import get_schema
+from app.modules.document_processing.unified_extraction_orchestrator import UnifiedExtractionOrchestrator
+from app.modules.document_processing.money_extraction_validator import MoneyExtractionValidator
+from app.modules.document_processing.document_schemas import get_schema
 import logging
 
 

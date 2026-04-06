@@ -8,30 +8,25 @@ import sys
 import os
 import logging
 
-# Add ML service path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'ml'))
-
 # Runtime health check - CRITICAL for production stability
-from .runtime_health import ensure_runtime_ready, get_runtime_health
+from app.modules.document_processing.runtime_health import ensure_runtime_ready, get_runtime_health
 
-from .service_schema import DocumentProcessingRequest, DocumentProcessingResult
-from .classification_service import DocumentClassificationService
-from .extraction_service import DocumentExtractionService
-from .processors import DocumentProcessor
-from ..ai_assist.llm_assist_service import analyze_application
-from ..ai_assist.llm_refinement_service import add_llm_refinement_to_response
-from ..intelligence.intelligence_service import IntelligenceService
-from .ml_priority import predict_application_priority
-from .workflow_service import WorkflowService
-from .paddle_ocr_service import PaddleOCRService
+from app.modules.document_processing.service_schema import DocumentProcessingRequest, DocumentProcessingResult
+from app.modules.document_processing.classification_service import DocumentClassificationService
+from app.modules.document_processing.extraction_service import DocumentExtractionService
+from app.modules.document_processing.processors import DocumentProcessor
+from app.modules.ai_assist.llm_assist_service import analyze_application
+from app.modules.ai_assist.llm_refinement_service import add_llm_refinement_to_response
+from app.modules.intelligence.intelligence_service import IntelligenceService
+from app.modules.document_processing.ml_priority import predict_application_priority
+from app.modules.document_processing.workflow_service import WorkflowService
+from app.modules.document_processing.docling_ingestion_service import DoclingIngestionService
+from app.modules.document_processing.granite_extraction_service import GraniteExtractionService
+from app.ml.ml_service import analyze_document_risk
 
-# Import new ML service
-try:
-    from ml_service import analyze_document_risk
-    ML_SERVICE_AVAILABLE = True
-except ImportError:
-    print("ML service not available, using fallback")
-    ML_SERVICE_AVAILABLE = False
+OCR_LANGUAGE_CODE = "eng+hin+mar"
+
+ML_SERVICE_AVAILABLE = True
 
 
 class DocumentProcessingService:
@@ -40,10 +35,8 @@ class DocumentProcessingService:
     def __init__(self):
         # CRITICAL: Ensure runtime is ready before initializing services
         try:
-            ensure_runtime_ready()
             logger = logging.getLogger(__name__)
-            health_status = get_runtime_health()
-            logger.info(f"[HEALTH] Runtime ready - Status: {health_status['overall_status']}")
+            get_runtime_health()
         except Exception as e:
             logger = logging.getLogger(__name__)
             logger.error(f"[HEALTH] Runtime not ready: {e}")
@@ -59,14 +52,48 @@ class DocumentProcessingService:
             self.extraction_service
         )
         
-        # Initialize PaddleOCR service with graceful degradation
+        # Lazy OCR service initialization - only when needed
+        self._ocr_service = None
+        self.paddle_ocr_service = None
+        self.logger = logging.getLogger(__name__)
+
+        # Initialize Docling ingestion service with graceful degradation
+        self.use_docling = os.getenv("USE_DOCLING", "true").lower() == "true"
         try:
-            self.paddle_ocr_service = PaddleOCRService()
-            logger.info("[INIT] PaddleOCR service initialized successfully")
+            if self.use_docling:
+                self.docling_service = DoclingIngestionService()
+                logger.info("[INIT] Docling ingestion service initialized successfully")
+            else:
+                logger.warning("[INIT] USE_DOCLING=false - Docling service disabled")
+                self.docling_service = None
         except Exception as e:
-            logger.warning(f"[INIT] PaddleOCR service initialization failed: {e}")
-            logger.warning("[INIT] Image OCR will not be available, but PDF/DOCX/TXT processing continues")
-            self.paddle_ocr_service = None
+            logger.warning(f"[INIT] Docling service initialization failed: {e}")
+            logger.warning("[INIT] Will fall back to traditional text extraction")
+            self.docling_service = None
+
+        # Initialize Granite extraction service with graceful degradation
+        try:
+            granite_endpoint = os.getenv("GRANITE_ENDPOINT")
+            self.use_granite = os.getenv("USE_GRANITE", "true").lower() == "true"
+            
+            if granite_endpoint and self.use_granite:
+                self.granite_service = GraniteExtractionService(granite_endpoint)
+                logger.info("[INIT] Granite extraction service initialized successfully")
+            else:
+                if not granite_endpoint:
+                    logger.info("[INIT] Granite: disabled (no endpoint configured)")
+                if not self.use_granite:
+                    logger.info("[INIT] USE_GRANITE=false - Granite service disabled")
+                self.granite_service = None
+        except Exception as e:
+            logger.error(f"[INIT] Granite service initialization failed: {e}")
+            logger.info("[INIT] Will fall back to traditional extraction logic")
+            self.granite_service = None
+
+    def _get_ocr_service(self):
+        """Lazy initialization of OCR service"""
+        self._ocr_service = None
+        return None
 
     # --- Defensive helpers -------------------------------------------------
     def _safe_dict(self, val: Any) -> Dict[str, Any]:
@@ -91,6 +118,153 @@ class DocumentProcessingService:
         except Exception:
             pass
         return float(default)
+
+    def _quality_issues(self, raw_text: str) -> List[str]:
+        import re
+
+        issues: List[str] = []
+        text = re.sub(r"\s+", " ", raw_text or "").strip()
+
+        if not text:
+            issues.append("empty_text")
+            return issues
+
+        if len(text) < 50:
+            issues.append("very_short_text")
+
+        alpha_count = sum(1 for char in text if char.isalpha())
+        symbol_count = sum(1 for char in text if not char.isalnum() and not char.isspace())
+        if alpha_count < 5:
+            issues.append("too_little_alphabetic_content")
+        if symbol_count > max(10, int(len(text) * 0.4)):
+            issues.append("mostly_symbols")
+
+        return issues
+
+    def _is_text_quality_poor(self, raw_text: str) -> bool:
+        import re
+
+        text = re.sub(r"\s+", " ", raw_text or "").strip()
+        if not text or len(text) < 50:
+            return True
+        issues = self._quality_issues(raw_text)
+        return any(issue in {"too_little_alphabetic_content", "mostly_symbols"} for issue in issues)
+
+    def _merge_text_content(self, primary_text: str, secondary_text: str) -> str:
+        import re
+
+        primary_lines = [line.strip() for line in (primary_text or "").splitlines() if line.strip()]
+        secondary_lines = [line.strip() for line in (secondary_text or "").splitlines() if line.strip()]
+        merged_lines: List[str] = []
+        seen_lines = set()
+
+        for line in primary_lines + secondary_lines:
+            normalized = re.sub(r"\s+", " ", line).strip()
+            if not normalized or normalized in seen_lines:
+                continue
+            seen_lines.add(normalized)
+            merged_lines.append(line)
+
+        if not merged_lines:
+            return (primary_text or secondary_text or "").strip()
+
+        return "\n".join(merged_lines).strip()
+
+    def _merge_docling_and_ocr_output(self, docling_output: Dict[str, Any], ocr_text: str) -> Dict[str, Any]:
+        merged_output = dict(docling_output)
+        merged_output["raw_text"] = self._merge_text_content(docling_output.get("raw_text", ""), ocr_text)
+
+        metadata = self._safe_dict(merged_output.get("metadata", {}))
+        metadata["ocr_fallback_used"] = True
+        metadata["ocr_text_length"] = len(ocr_text)
+        warnings = self._safe_list(metadata.get("warnings", []))
+        if "ocr_fallback_used" not in warnings:
+            warnings.append("ocr_fallback_used")
+        metadata["warnings"] = warnings
+        merged_output["metadata"] = metadata
+
+        return merged_output
+
+    def _resolve_tesseract_binary(self):
+        """Resolve a usable Tesseract binary path for OCR fallback."""
+        import pytesseract
+        import shutil
+
+        current_path = getattr(pytesseract.pytesseract, "tesseract_cmd", "") or shutil.which("tesseract")
+        if current_path:
+            try:
+                pytesseract.pytesseract.tesseract_cmd = current_path
+                pytesseract.get_tesseract_version()
+                return current_path
+            except Exception:
+                pass
+
+        windows_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+        if os.path.exists(windows_path):
+            try:
+                pytesseract.pytesseract.tesseract_cmd = windows_path
+                pytesseract.get_tesseract_version()
+                return windows_path
+            except Exception:
+                return None
+
+        return None
+
+    def _build_canonical_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Build canonical data from structured_data with normalization
+        
+        Args:
+            data: Dictionary containing structured_data
+            
+        Returns:
+            Normalized canonical dictionary with non-empty values only
+        """
+        canonical = {}
+        structured_data = self._safe_dict(data.get("structured_data", {}))
+        
+        for key, value in structured_data.items():
+            if value is None:
+                continue
+            
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    continue
+            
+            # Normalize amount-like fields to numeric
+            if key in ["requested_amount", "claim_amount", "subsidy_amount", "amount"]:
+                try:
+                    normalized_amount = self._safe_number(value, default=0.0)
+                    if normalized_amount > 0:
+                        canonical[key] = normalized_amount
+                    continue
+                except Exception:
+                    pass
+            
+            canonical[key] = value
+        
+        return canonical
+    
+    def _normalize_extracted_fields(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize extracted_fields to ensure it's not empty when structured_data has values
+        
+        Args:
+            data: Dictionary containing structured_data and extracted_fields
+            
+        Returns:
+            Normalized extracted_fields dictionary
+        """
+        extracted_fields = self._safe_dict(data.get("extracted_fields", {}))
+        structured_data = self._safe_dict(data.get("structured_data", {}))
+        
+        # Seed extracted_fields from structured_data if empty
+        for key, value in structured_data.items():
+            if key not in extracted_fields and value is not None and str(value).strip():
+                extracted_fields[key] = value
+        
+        return extracted_fields
 
     def _build_officer_summary(self, extracted_data: Dict[str, Any]) -> str:
         """Build a deterministic, officer-facing summary from extracted fields."""
@@ -121,6 +295,163 @@ class DocumentProcessingService:
             parts.append("Key identity fields are available; subsidy type or application details may be missing.")
 
         return " ".join(parts)
+    
+    def _extract_with_docling_granite(self, file_data: bytes, filename: str) -> Dict[str, Any]:
+        """
+        Extract document information using Docling + Granite pipeline
+        
+        Args:
+            file_data: Raw file bytes
+            filename: Original filename
+            
+        Returns:
+            Schema-compliant extraction result
+            
+        Raises:
+            ValueError: If extraction fails
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Check if services are available
+        if not self.docling_service:
+            raise ValueError("Docling service not available")
+        
+        if not self.granite_service:
+            raise ValueError("Granite service not available")
+        
+        try:
+            # Step 1: Docling ingestion
+            logger.info(f"[DOCLING] Starting ingestion for {filename}")
+            docling_output = self.docling_service.ingest_document(file_data, filename)
+            
+            # Validate Docling output
+            if not docling_output:
+                raise ValueError("Docling ingestion returned no result")
+            
+            docling_text = docling_output.get('raw_text', '')
+            logger.info(f"[DOCLING] success for {filename}: {len(docling_text)} chars")
+
+            if self._is_text_quality_poor(docling_text):
+                logger.warning(f"[OCR] fallback used for {filename}")
+                try:
+                    ocr_text = self._extract_text_from_file(file_data, filename)
+                    if not ocr_text.strip() or self._is_text_quality_poor(ocr_text):
+                        raise ValueError("OCR fallback produced poor text")
+                    docling_output = self._merge_docling_and_ocr_output(docling_output, ocr_text)
+                    logger.info(f"[PIPELINE] final text length: {len(docling_output.get('raw_text', ''))}")
+                except Exception as ocr_error:
+                    logger.error(f"[OCR] failed for {filename}: {ocr_error}")
+                    failure_payload = self._create_processing_failure_payload(
+                        filename,
+                        str(ocr_error),
+                        "OCR_FAILURE"
+                    )
+                    return failure_payload
+            
+            # Step 2: Granite extraction
+            logger.info(f"[GRANITE] Starting extraction for {filename}")
+            granite_output = self.granite_service.extract_with_granite(docling_output)
+            
+            # Validate Granite output
+            if not granite_output:
+                raise ValueError("Granite extraction returned no results")
+            
+            logger.info(f"[GRANITE] Extraction complete: {granite_output.get('document_type', 'unknown')}")
+            
+            # Add processing metadata
+            granite_output['processing_metadata'] = {
+                'pipeline': 'docling_granite',
+                'docling_available': True,
+                'granite_available': True,
+                'file_type': docling_output.get('metadata', {}).get('file_type', 'unknown'),
+                'docling_text_length': len(docling_output.get('raw_text', '')),
+                'has_tables': len(docling_output.get('tables', [])) > 0,
+                'has_sections': len(docling_output.get('sections', [])) > 0
+            }
+
+            logger.info(f"[PIPELINE] final text length: {len(docling_output.get('raw_text', ''))}")
+            
+            return granite_output
+            
+        except Exception as e:
+            logger.error(f"[DOCLING-GRANITE] Pipeline failed for {filename}: {e}")
+            raise ValueError(f"Docling+Granite extraction failed: {e}")
+    
+    def _should_use_docling_granite(self, filename: str) -> bool:
+        """
+        Determine if Docling+Granite pipeline should be used for this file
+        
+        Args:
+            filename: Original filename
+            
+        Returns:
+            True if Docling+Granite should be used
+        """
+        # Check production safety flags
+        if not self.use_docling or not self.use_granite:
+            return False
+        
+        # Check if services are available
+        if not self.docling_service or not self.granite_service:
+            return False
+        
+        # Check file type
+        file_extension = filename.lower().split('.')[-1] if '.' in filename.lower() else ''
+        
+        # Use Docling+Granite for PDF, DOCX, and images when available
+        # TXT files can use traditional path for now (as per requirements)
+        supported_types = ['pdf', 'docx', 'jpg', 'jpeg', 'png', 'tiff', 'bmp']
+        
+        return file_extension in supported_types
+    
+    def _create_processing_failure_payload(self, filename: str, error_message: str, failure_type: str = "PROCESSING_FAILURE") -> Dict[str, Any]:
+        """
+        Create a safe failure payload for processing errors
+        
+        Args:
+            filename: Original filename
+            error_message: Error message
+            failure_type: Type of failure (OCR_FAILURE, PROCESSING_FAILURE)
+            
+        Returns:
+            Schema-compliant failure payload
+        """
+        return {
+            "document_type": "unknown",
+            "structured_data": {},
+            "extracted_fields": {},
+            "missing_fields": [],
+            "confidence": 0.0,
+            "reasoning": [f"{failure_type}: {error_message}"],
+            "classification_confidence": 0.0,
+            "classification_reasoning": {
+                "keywords_found": [],
+                "structural_indicators": [],
+                "confidence_factors": [f"{failure_type}: {error_message}"]
+            },
+            "risk_flags": [
+                {
+                    "code": failure_type,
+                    "severity": "high",
+                    "message": f"{failure_type}: {error_message}"
+                }
+            ],
+            "decision_support": {
+                "decision": "manual_review_required",
+                "confidence": 0.0,
+                "reasoning": [f"{failure_type}: {error_message}"]
+            },
+            "canonical": {},
+            "summary": f"Document processing failed: {failure_type} - {error_message}",
+            "ai_summary": f"Document processing failed: {failure_type} - {error_message}",
+            "processing_metadata": {
+                "pipeline": "docling_granite",
+                "processing_failure": True,
+                "failure_type": failure_type,
+                "error_message": error_message
+            }
+        }
     
     async def process_document(
         self,
@@ -156,6 +487,73 @@ class DocumentProcessingService:
             # Extract text from binary file before workflow
             if file_data:
                 try:
+                    # NEW: Check if we should use Docling+Granite pipeline
+                    if self._should_use_docling_granite(filename):
+                        logger.info(f"[EXTRACT] Using Docling+Granite pipeline for {filename}")
+                        try:
+                            # Use Docling+Granite for full extraction
+                            granite_result = self._extract_with_docling_granite(file_data, filename)
+                            
+                            # Convert to result format and return early
+                            # This bypasses the traditional processor since Granite provides full schema
+                            return DocumentProcessingResult(
+                                request_id=str(uuid.uuid4()),
+                                success=True,
+                                processing_time_ms=0,  # TODO: Add timing
+                                processing_type=processing_type,
+                                filename=filename,
+                                data=granite_result,
+                                metadata={"pipeline": "docling_granite"},
+                                error_message=None
+                            )
+                            
+                        except Exception as docling_granite_error:
+                            logger.warning(f"[EXTRACT] Docling+Granite pipeline failed for {filename}: {docling_granite_error}")
+                            logger.warning(f"[EXTRACT] Falling back to traditional extraction")
+                            
+                            # TRUE FALLBACK: Use traditional text extraction
+                            try:
+                                extracted_text = self._extract_text_from_file(file_data, filename)
+                                logger.info(f"[EXTRACT] Fallback extracted text length: {len(extracted_text)}")
+                                
+                                # PART 5: FAIL EXPLICITLY ON EMPTY EXTRACTION
+                                if not extracted_text.strip():
+                                    logger.error(f"[EXTRACT] Fallback empty text extraction for {filename}")
+                                    return DocumentProcessingResult(
+                                        request_id=str(uuid.uuid4()),
+                                        success=False,
+                                        processing_time_ms=0,
+                                        processing_type=processing_type,
+                                        filename=filename,
+                                        data=None,
+                                        metadata={},
+                                        error_message="Unable to extract text from document - file may be corrupted or unreadable"
+                                    )
+                                
+                                # PART 2: PASS EXTRACTED TEXT INTO OPTIONS
+                                options["ocr_text"] = extracted_text
+                                logger.info(f"[EXTRACT] Passing fallback extracted text into workflow")
+                                
+                            except Exception as fallback_error:
+                                logger.error(f"[EXTRACT] Fallback also failed: {fallback_error}")
+                                
+                                # Create processing failure payload for complete failure
+                                failure_payload = self._create_processing_failure_payload(
+                                    filename, str(fallback_error), "COMPLETE_PROCESSING_FAILURE"
+                                )
+                                
+                                return DocumentProcessingResult(
+                                    request_id=str(uuid.uuid4()),
+                                    success=True,  # Success=true but with failure flags for manual review
+                                    processing_time_ms=0,
+                                    processing_type=processing_type,
+                                    filename=filename,
+                                    data=failure_payload,
+                                    metadata={"pipeline": "docling_granite", "processing_failure": True},
+                                    error_message=None
+                                )
+                    
+                    # FALLBACK: Use traditional text extraction
                     extracted_text = self._extract_text_from_file(file_data, filename)
                     logger.info(f"[EXTRACT] Extracted text length: {len(extracted_text)}")
                     
@@ -183,11 +581,16 @@ class DocumentProcessingService:
                     # CHECK IF THIS IS AN OCR FAILURE (IMAGE FILE)
                     file_extension = filename.lower().split('.')[-1] if '.' in filename.lower() else ''
                     is_image_file = file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp']
-                    is_ocr_failure = "OCR failed" in str(extraction_error) or "Tesseract" in str(extraction_error) or "PaddleOCR" in str(extraction_error)
+                    error_text = str(extraction_error)
+                    is_ocr_failure = (
+                        "OCR failed" in error_text
+                        or "Tesseract" in error_text
+                        or "OCR_FAILURE" in error_text
+                    )
                     
                     if is_image_file and is_ocr_failure:
                         # OCR FAILURE: Return proper response with risk_flags
-                        logger.warning(f"[PIPELINE] OCR FAILED for image {filename}: {extraction_error}")
+                        logger.error(f"[OCR] failed for image {filename}: {extraction_error}")
                         
                         # Create OCR failure response data
                         ocr_failure_data = {
@@ -215,7 +618,9 @@ class DocumentProcessingService:
                                 "confidence": 0.0,
                                 "reasoning": ["OCR failed - image OCR unavailable or extraction failed"]
                             },
-                            "canonical": {}
+                            "canonical": {},
+                            "summary": "Automatic extraction failed. Manual review required.",
+                            "ai_summary": "Automatic extraction failed. Manual review required."
                         }
                         
                         return DocumentProcessingResult(
@@ -334,11 +739,16 @@ class DocumentProcessingService:
                         # CHECK IF THIS IS AN OCR FAILURE (IMAGE FILE)
                         file_extension = filename.lower().split('.')[-1] if '.' in filename.lower() else ''
                         is_image_file = file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp']
-                        is_ocr_failure = "OCR failed" in str(extraction_error) or "Tesseract" in str(extraction_error) or "PaddleOCR" in str(extraction_error)
+                        error_text = str(extraction_error)
+                        is_ocr_failure = (
+                            "OCR failed" in error_text
+                            or "Tesseract" in error_text
+                            or "OCR_FAILURE" in error_text
+                        )
                         
                         if is_image_file and is_ocr_failure:
                             # OCR FAILURE: Return proper response with risk_flags
-                            logger.warning(f"[PIPELINE] Batch OCR FAILED for image {filename}: {extraction_error}")
+                            logger.error(f"[OCR] failed for image {filename}: {extraction_error}")
                             
                             # Create OCR failure response data
                             ocr_failure_data = {
@@ -366,7 +776,9 @@ class DocumentProcessingService:
                                     "confidence": 0.0,
                                     "reasoning": ["OCR failed - image OCR unavailable or extraction failed"]
                                 },
-                                "canonical": {}
+                                "canonical": {},
+                                "summary": "Automatic extraction failed. Manual review required.",
+                                "ai_summary": "Automatic extraction failed. Manual review required."
                             }
                             
                             ocr_failure_result = DocumentProcessingResult(
@@ -486,11 +898,16 @@ class DocumentProcessingService:
                     # CHECK IF THIS IS AN OCR FAILURE (IMAGE FILE)
                     file_extension = filename.lower().split('.')[-1] if '.' in filename.lower() else ''
                     is_image_file = file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp']
-                    is_ocr_failure = "OCR failed" in str(extraction_error) or "Tesseract" in str(extraction_error) or "PaddleOCR" in str(extraction_error)
+                    error_text = str(extraction_error)
+                    is_ocr_failure = (
+                        "OCR failed" in error_text
+                        or "Tesseract" in error_text
+                        or "OCR_FAILURE" in error_text
+                    )
                     
                     if is_image_file and is_ocr_failure:
                         # OCR FAILURE: Return proper response with risk_flags
-                        logger.warning(f"[PIPELINE] Classification OCR FAILED for image {filename}: {extraction_error}")
+                        logger.error(f"[OCR] failed for image {filename}: {extraction_error}")
                         return {
                             "document_type": "unknown",
                             "classification_confidence": 0.0,
@@ -725,11 +1142,16 @@ class DocumentProcessingService:
                     # CHECK IF THIS IS AN OCR FAILURE (IMAGE FILE)
                     file_extension = filename.lower().split('.')[-1] if '.' in filename.lower() else ''
                     is_image_file = file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp']
-                    is_ocr_failure = "OCR failed" in str(ocr_error) or "Tesseract" in str(ocr_error) or "PaddleOCR" in str(ocr_error)
+                    error_text = str(ocr_error)
+                    is_ocr_failure = (
+                        "OCR failed" in error_text
+                        or "Tesseract" in error_text
+                        or "OCR_FAILURE" in error_text
+                    )
                     
                     if is_image_file and is_ocr_failure:
                         # OCR FAILURE: Return proper response with risk_flags
-                        logger.warning(f"[PIPELINE] Request OCR FAILED for image {filename}: {ocr_error}")
+                        logger.error(f"[OCR] failed for image {filename}: {ocr_error}")
                         
                         # Create OCR failure response data
                         ocr_failure_data = {
@@ -757,7 +1179,9 @@ class DocumentProcessingService:
                                 "confidence": 0.0,
                                 "reasoning": ["OCR failed - image OCR unavailable or extraction failed"]
                             },
-                            "canonical": {}
+                            "canonical": {},
+                            "summary": "Automatic extraction failed. Manual review required.",
+                            "ai_summary": "Automatic extraction failed. Manual review required."
                         }
                         
                         return DocumentProcessingResult(
@@ -914,6 +1338,24 @@ class DocumentProcessingService:
         
         # STEP 7: Final validation and fixes
         self._apply_final_validation(data, extracted_data)
+        
+        # STEP 7.5: Apply canonical builder and extracted fields normalizer
+        # Build canonical from structured_data
+        canonical_from_structured = self._build_canonical_data(data)
+        existing_canonical = self._safe_dict(data.get("canonical"))
+        
+        # Merge canonical data - prefer structured_data canonical but preserve valid existing values
+        final_canonical = canonical_from_structured.copy()
+        for key, value in existing_canonical.items():
+            if value is not None and str(value).strip() and key not in final_canonical:
+                final_canonical[key] = value
+        
+        data["canonical"] = final_canonical
+        extracted_data["canonical"] = final_canonical
+        
+        # Normalize extracted_fields
+        data["extracted_fields"] = self._normalize_extracted_fields(data)
+        extracted_data["extracted_fields"] = data["extracted_fields"]
         
         # STEP 8: Apply deterministic verification routing
         self._authoritative_final_evaluation(extracted_data, data)
@@ -1350,6 +1792,10 @@ class DocumentProcessingService:
                 data["summary"] = fixed_summary
                 data["ai_summary"] = fixed_summary
             
+            # ENSURE SUMMARY SYNC: Always keep ai_summary in sync with summary
+            if data.get("summary"):
+                data["ai_summary"] = data["summary"]
+            
             # Validate decision exists
             decision = data_dict.get("decision")
             if not decision or decision not in ["approve", "review", "reject", "manual_review"]:
@@ -1670,7 +2116,7 @@ class DocumentProcessingService:
         logger = logging.getLogger(__name__)
         
         try:
-            import pdfplumber
+            import pdfplumber  # type: ignore[reportMissingImports]
             import io
             
             text_parts = []
@@ -1693,7 +2139,7 @@ class DocumentProcessingService:
             logger.error(f"[DOC OCR] PDF extraction failed: {e}")
             # Fallback to PyMuPDF if pdfplumber fails
             try:
-                import fitz  # PyMuPDF
+                import fitz  # PyMuPDF  # type: ignore[reportMissingImports]
                 doc = fitz.open(stream=file_content, filetype="pdf")
                 text_parts = []
                 for page_num in range(len(doc)):
@@ -1717,7 +2163,7 @@ class DocumentProcessingService:
         logger = logging.getLogger(__name__)
         
         try:
-            import docx
+            import docx  # type: ignore[reportMissingImports]
             import io
             
             # Create a temporary file-like object from bytes
@@ -1754,123 +2200,80 @@ class DocumentProcessingService:
             raise ValueError(f"DOCX extraction failed: {str(e)}")
     
     def _extract_text_from_image(self, file_content: bytes, filename: str) -> str:
-        """Extract text from image bytes using PaddleOCR (primary) with Tesseract fallback"""
+        """Extract text from image bytes using Tesseract OCR."""
         import logging
         logger = logging.getLogger(__name__)
-        
-        # STEP 1: TRY PADDLEOCR FIRST (PRIMARY OCR ENGINE)
-        if self.paddle_ocr_service:
-            try:
-                logger.info(f"[PADDLE OCR] Attempting extraction with PaddleOCR for {filename}")
-                extracted_text = self.paddle_ocr_service.extract_text_from_image_bytes(file_content, filename)
-                logger.info(f"[PADDLE OCR] PaddleOCR extraction successful: {len(extracted_text)} chars")
-                return extracted_text
-            except Exception as paddle_error:
-                logger.warning(f"[PADDLE OCR] PaddleOCR extraction failed: {paddle_error}")
-                # Continue to fallback
-        else:
-            logger.warning(f"[PADDLE OCR] PaddleOCR service not available for {filename}")
-        
-        # STEP 2: FALLBACK TO TESSERACT (LEGACY FALLBACK ONLY)
-        logger.info(f"[TESSERACT] Falling back to Tesseract for {filename}")
-        
-        # CRITICAL: Fail fast if Tesseract is not available when OCR is actually used
-        import shutil
-        if not shutil.which("tesseract"):
-            raise ValueError("OCR failed: Neither PaddleOCR nor Tesseract is available")
+
+        import io
+        from PIL import Image
+        import PIL.ImageEnhance
+        import PIL.ImageFilter
+        import pytesseract
+
+        tesseract_path = self._resolve_tesseract_binary()
+        if not tesseract_path:
+            raise ValueError("OCR_FAILURE: Tesseract binary not found")
+
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
+        logger.info(f"[OCR] Using Tesseract at: {tesseract_path}")
         
         try:
-            import PIL.Image
-            import pytesseract
-            import io
-            
-            # Configure tesseract before OCR
-            tesseract_path = shutil.which("tesseract")
-            pytesseract.pytesseract.tesseract_cmd = tesseract_path
-            logger.info(f"[TESSERACT] Tesseract configured at: {tesseract_path}")
-            
-            # Open image from bytes
             image = PIL.Image.open(io.BytesIO(file_content))
-            
-            # Convert to RGB if necessary (tesseract works best with RGB)
+
             if image.mode != 'RGB':
                 image = image.convert('RGB')
-                logger.debug("[TESSERACT] Converted image to RGB mode")
-            
-            # Apply basic preprocessing for better OCR accuracy
-            import PIL.ImageEnhance
-            import PIL.ImageFilter
-            
-            # Increase contrast
+
             enhancer = PIL.ImageEnhance.Contrast(image)
             image = enhancer.enhance(2.0)
-            
-            # Convert to grayscale for better OCR
+
             gray_image = image.convert('L')
-            
-            # Apply threshold for better text extraction
-            from PIL import Image
+
             try:
                 import numpy as np
-                # Try to use numpy for better thresholding
                 img_array = np.array(gray_image)
-                # Simple thresholding
                 threshold = 128
                 img_array = np.where(img_array > threshold, 255, 0).astype(np.uint8)
                 processed_image = Image.fromarray(img_array, mode='L')
-                logger.debug("[TESSERACT] Applied numpy threshold preprocessing")
             except ImportError:
-                # Fallback: use PIL's built-in point operation
                 processed_image = gray_image.point(lambda x: 0 if x < 128 else 255, mode='1')
-                logger.debug("[TESSERACT] Applied PIL threshold preprocessing")
-            
-            # STEP 3: TESSERACT OCR EXECUTION - Marathi + English
+
             try:
                 extracted_text = pytesseract.image_to_string(
                     processed_image,
-                    lang="mar+eng"
+                    lang=OCR_LANGUAGE_CODE
                 )
-                logger.info("[TESSERACT] Marathi+English OCR completed")
+                logger.info(f"[OCR] OCR completed for {filename} using {OCR_LANGUAGE_CODE}")
             except Exception as lang_error:
-                logger.warning(f"[TESSERACT] Marathi+English OCR failed, falling back to English only: {lang_error}")
-                # Fallback to English only
+                logger.warning(f"[OCR] OCR failed with {OCR_LANGUAGE_CODE}, falling back to English only: {lang_error}")
                 extracted_text = pytesseract.image_to_string(processed_image, lang="eng")
-            
-            # STEP 4: Enhanced handwritten/low OCR safety
+
             text_length = len(extracted_text.strip())
-            
-            # Check for completely empty extraction
+
             if text_length == 0:
-                logger.error(f"[TESSERACT] No text extracted from image {filename} - may be unreadable or handwritten")
-                raise ValueError("No text could be extracted from image - document may be handwritten or corrupted")
-            
-            # Check for very low extraction (potential handwritten)
-            elif text_length < 20:
-                logger.warning(f"[TESSERACT] Very low text extraction from image {filename}: {text_length} chars - possible handwritten document")
-                # Add OCR quality warning to the text for downstream processing
+                raise ValueError("OCR failed: no text could be extracted from image")
+
+            if text_length < 20:
+                logger.warning(f"[OCR] Very low text extraction from image {filename}: {text_length} chars")
                 extracted_text = f"[LOW_OCR_QUALITY] {extracted_text.strip()}"
-                logger.warning(f"[TESSERACT] Added low OCR quality warning for downstream processing")
-            
-            # Check for common OCR error patterns that indicate handwriting
+
             ocr_error_patterns = [
                 "|||||||", "||||||", "|||||", "||||",  # Vertical lines (common in handwritten forms)
                 "_____", "____", "___",  # Underlines
                 "[illegible]", "[unreadable]", "[unclear]"  # Explicit illegibility markers
             ]
-            
+
             for pattern in ocr_error_patterns:
                 if pattern in extracted_text.lower():
-                    logger.warning(f"[TESSERACT] Detected handwriting pattern '{pattern}' in {filename}")
+                    logger.warning(f"[OCR] Detected handwriting pattern '{pattern}' in {filename}")
                     extracted_text = f"[HANDWRITING_DETECTED] {extracted_text.strip()}"
                     break
-            
-            logger.info(f"[TESSERACT] Image OCR extraction complete: {text_length} chars")
+
+            logger.info(f"[OCR] Image OCR extraction complete: {text_length} chars")
             return extracted_text.strip()
-            
-        except Exception as tesseract_error:
-            logger.error(f"[TESSERACT] Tesseract OCR processing failed: {tesseract_error}")
-            # Raise exception that indicates both OCR engines failed
-            raise ValueError(f"OCR failed: Both PaddleOCR and Tesseract failed - PaddleOCR unavailable/failed, Tesseract failed: {str(tesseract_error)}")
+
+        except Exception as ocr_error:
+            logger.error(f"[OCR] Tesseract OCR processing failed: {ocr_error}")
+            raise ValueError(f"OCR_FAILURE: Tesseract extraction failed - {str(ocr_error)}")
     
     def _extract_text_from_text_file(self, file_content: bytes) -> str:
         """Extract text from text file bytes"""

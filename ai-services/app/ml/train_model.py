@@ -15,7 +15,7 @@ from typing import Dict, Any, List, Tuple
 import os
 import json
 
-from feature_extractor import FeatureExtractor
+from app.ml.feature_extractor import FeatureExtractor
 
 class RandomForestModel:
     """Random Forest classifier for document risk assessment"""

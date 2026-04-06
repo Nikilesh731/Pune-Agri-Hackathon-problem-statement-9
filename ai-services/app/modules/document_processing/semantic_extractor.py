@@ -5,8 +5,8 @@ Purpose: Advanced extraction using semantic understanding and context awareness
 import re
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
-from .layout_analyzer import LayoutAnalyzer, SemanticBlock
-from .utils import safe_float
+from app.modules.document_processing.layout_analyzer import LayoutAnalyzer, SemanticBlock
+from app.modules.document_processing.utils import safe_float
 
 
 @dataclass

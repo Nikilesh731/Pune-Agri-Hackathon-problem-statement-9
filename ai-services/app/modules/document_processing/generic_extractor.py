@@ -5,7 +5,7 @@ Works as a shared extractor for common fields across all document types
 """
 import re
 from typing import Dict, Any, Optional, List
-from .utils import (
+from app.modules.document_processing.utils import (
     normalize_ocr_text, 
     BoundaryAwareExtractor, 
     FieldValidators, 

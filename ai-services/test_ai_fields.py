@@ -3,9 +3,8 @@
 
 import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), 'app'))
 
-from modules.document_processing.document_processing_service import DocumentProcessingService
+from app.modules.document_processing.document_processing_service import DocumentProcessingService
 
 async def test_ai_fields():
     """Test that AI fields are present in extraction results"""
@@ -52,21 +51,21 @@ async def test_ai_fields():
     
     print("\n=== AI Fields Check ===")
     if data and 'ai_summary' in data:
-        print(f"✅ ai_summary: {data['ai_summary']}")
+        print(f"âœ… ai_summary: {data['ai_summary']}")
     else:
-        print("❌ ai_summary: MISSING")
+        print("âŒ ai_summary: MISSING")
     
     if data and 'risk_flags' in data:
-        print(f"✅ risk_flags: {data['risk_flags']}")
+        print(f"âœ… risk_flags: {data['risk_flags']}")
     else:
-        print("❌ risk_flags: MISSING")
+        print("âŒ risk_flags: MISSING")
     
     if data and 'decision_support' in data:
-        print(f"✅ decision_support: {data['decision_support']}")
+        print(f"âœ… decision_support: {data['decision_support']}")
     else:
-        print("❌ decision_support: MISSING")
+        print("âŒ decision_support: MISSING")
     
-    print(f"\nOverall result: {'✅ SUCCESS' if result.success else '❌ FAILED'}")
+    print(f"\nOverall result: {'âœ… SUCCESS' if result.success else 'âŒ FAILED'}")
 
 if __name__ == "__main__":
     import asyncio

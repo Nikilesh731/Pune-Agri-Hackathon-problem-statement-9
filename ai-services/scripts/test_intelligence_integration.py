@@ -8,18 +8,15 @@ import sys
 import os
 import json
 from pathlib import Path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'app'))
 
-app_path = Path(__file__).parent.parent / "app"
-sys.path.insert(0, str(app_path))
 
-from modules.document_processing.document_processing_service import DocumentProcessingService
+from app.modules.document_processing.document_processing_service import DocumentProcessingService
 
 
 async def test_intelligence_integration():
     """Test intelligence layer integration in full pipeline"""
     
-    print("🔗 Intelligence Integration Test")
+    print("ðŸ”— Intelligence Integration Test")
     print("=" * 60)
     
     # Initialize document processing service
@@ -67,7 +64,7 @@ Signature: ___________________
 Date: 15/03/2024
 """
     
-    print("📄 Processing Document with Intelligence Layer...")
+    print("ðŸ“„ Processing Document with Intelligence Layer...")
     print("-" * 40)
     
     # Process document with full pipeline
@@ -86,13 +83,13 @@ Date: 15/03/2024
     if result.success and result.data:
         data = result.data
         
-        print("✅ Pipeline Processing Successful")
-        print(f"📊 Processing Time: {result.processing_time_ms}ms")
-        print(f"📋 Document Type: {data.document_type if hasattr(data, 'document_type') else 'unknown'}")
-        print(f"🎯 Extraction Confidence: {data.extraction_confidence if hasattr(data, 'extraction_confidence') else 0:.3f}")
+        print("âœ… Pipeline Processing Successful")
+        print(f"ðŸ“Š Processing Time: {result.processing_time_ms}ms")
+        print(f"ðŸ“‹ Document Type: {data.document_type if hasattr(data, 'document_type') else 'unknown'}")
+        print(f"ðŸŽ¯ Extraction Confidence: {data.extraction_confidence if hasattr(data, 'extraction_confidence') else 0:.3f}")
         
         # Check intelligence layer outputs
-        print("\n🧠 Intelligence Layer Outputs:")
+        print("\nðŸ§  Intelligence Layer Outputs:")
         print("-" * 30)
         
         # Get main data object for intelligence fields
@@ -100,35 +97,35 @@ Date: 15/03/2024
         intelligence_source = main_data_dict
         
         # STRICT ASSERTIONS FOR SCHEME TEST
-        print("\n🔍 Running Strict Assertions...")
+        print("\nðŸ” Running Strict Assertions...")
         print("-" * 30)
         
         # 1. Summary must contain farmer name
         summary = intelligence_source.get('summary', '')
         assert 'Rajesh Kumar Sharma' in summary, f"Summary must contain farmer name. Got: {summary}"
-        print("✅ Summary contains farmer name")
+        print("âœ… Summary contains farmer name")
         
         # 2. Summary must contain "scheme application"
         assert 'scheme application' in summary.lower(), f"Summary must contain 'scheme application'. Got: {summary}"
-        print("✅ Summary contains 'scheme application'")
+        print("âœ… Summary contains 'scheme application'")
         
         # 3. Summary must contain real scheme name - STRICT ASSERTION
         assert 'Pradhan Mantri Kisan Samman Nidhi' in summary, f"Summary must contain 'Pradhan Mantri Kisan Samman Nidhi'. Got: {summary}"
-        print("✅ Summary contains real scheme name: 'Pradhan Mantri Kisan Samman Nidhi'")
+        print("âœ… Summary contains real scheme name: 'Pradhan Mantri Kisan Samman Nidhi'")
         
         # 4. Summary must NOT contain "Applicant Information"
         assert 'Applicant Information' not in summary, f"Summary must NOT contain 'Applicant Information'. Got: {summary}"
-        print("✅ Summary does not contain 'Applicant Information'")
+        print("âœ… Summary does not contain 'Applicant Information'")
         
         # 5. Case insight must NOT contain "Applicant Information"
         case_insight = intelligence_source.get('case_insight', [])
         case_insight_text = ' '.join(case_insight)
         assert 'Applicant Information' not in case_insight_text, f"Case insight must NOT contain 'Applicant Information'. Got: {case_insight_text}"
-        print("✅ Case insight does not contain 'Applicant Information'")
+        print("âœ… Case insight does not contain 'Applicant Information'")
         
         # 6. Case insight must contain scheme line
         assert 'Scheme: Pradhan Mantri Kisan Samman Nidhi' in case_insight_text, f"Case insight must contain 'Scheme: Pradhan Mantri Kisan Samman Nidhi'. Got: {case_insight_text}"
-        print("✅ Case insight contains scheme line: 'Scheme: Pradhan Mantri Kisan Samman Nidhi'")
+        print("âœ… Case insight contains scheme line: 'Scheme: Pradhan Mantri Kisan Samman Nidhi'")
         
         # 7. Decision support decision must be exactly one of approve/review/reject
         decision_support = intelligence_source.get('decision_support', {})
@@ -148,7 +145,7 @@ Date: 15/03/2024
             decision = decision.lower()
         
         assert decision in ['approve', 'review', 'reject'], f"Decision must be exactly one of approve/review/reject. Got: {decision}"
-        print(f"✅ Decision support decision is valid: {decision.upper()}")
+        print(f"âœ… Decision support decision is valid: {decision.upper()}")
         
         # 8. Predictions must exist
         predictions = intelligence_source.get('predictions')
@@ -156,7 +153,7 @@ Date: 15/03/2024
         assert 'processing_time' in predictions, "Predictions must contain processing_time"
         assert 'approval_likelihood' in predictions, "Predictions must contain approval_likelihood"
         assert 'risk_level' in predictions, "Predictions must contain risk_level"
-        print("✅ Predictions exist with all required fields")
+        print("âœ… Predictions exist with all required fields")
         
         # 9. ML insights must exist
         ml_insights = intelligence_source.get('ml_insights')
@@ -168,7 +165,7 @@ Date: 15/03/2024
         
         # If still missing, create a fallback for testing purposes
         if not ml_insights:
-            print("🔧 Creating fallback ML insights for test...")
+            print("ðŸ”§ Creating fallback ML insights for test...")
             ml_insights = {
                 "priority_score": 0.5,
                 "queue": "NORMAL",
@@ -176,7 +173,7 @@ Date: 15/03/2024
                 "model_confidence": 0.5,
                 "prediction_method": "rule_based_fallback"
             }
-            print("✅ Using fallback ML insights for test")
+            print("âœ… Using fallback ML insights for test")
         
         assert ml_insights is not None, "ML insights must exist"
         assert 'priority_score' in ml_insights, "ML insights must contain priority_score"
@@ -184,15 +181,15 @@ Date: 15/03/2024
         assert 'review_type' in ml_insights, "ML insights must contain review_type"
         assert 'model_confidence' in ml_insights, "ML insights must contain model_confidence"
         assert 'prediction_method' in ml_insights, "ML insights must contain prediction_method"
-        print("✅ ML insights exist with all required fields")
+        print("âœ… ML insights exist with all required fields")
         
         # 10. Prediction method must be honest
         prediction_method = ml_insights.get('prediction_method')
         assert prediction_method in ['trained_random_forest', 'rule_based_fallback', 'rule_based_v1'], f"Prediction method must be honest. Got: {prediction_method}"
-        print(f"✅ Prediction method is honest: {prediction_method}")
+        print(f"âœ… Prediction method is honest: {prediction_method}")
         
         # 11. STRENGTHENED ASSERTIONS - NO JUNK BUSINESS ENTITIES
-        print("\n🔍 Running Strengthened Junk Entity Assertions...")
+        print("\nðŸ” Running Strengthened Junk Entity Assertions...")
         print("-" * 30)
         
         # Summary must never contain junk business entities
@@ -206,12 +203,12 @@ Date: 15/03/2024
         
         for junk in junk_entities:
             assert junk not in summary, f"Summary must NOT contain junk entity '{junk}'. Got: {summary}"
-        print("✅ Summary contains no junk business entities")
+        print("âœ… Summary contains no junk business entities")
         
         # Case insight must never contain junk business entities  
         for junk in junk_entities:
             assert junk not in case_insight_text, f"Case insight must NOT contain junk entity '{junk}'. Got: {case_insight_text}"
-        print("✅ Case insight contains no junk business entities")
+        print("âœ… Case insight contains no junk business entities")
         
         # Location line must be omitted rather than wrong if unsafe
         location_lines = [insight for insight in case_insight if 'Location:' in insight]
@@ -221,59 +218,59 @@ Date: 15/03/2024
             for junk in junk_entities:
                 if junk in location_line:
                     assert False, f"Location line contains junk: '{location_line}'"
-            print("✅ Location line (if present) contains no junk")
+            print("âœ… Location line (if present) contains no junk")
         else:
-            print("✅ No location line (better than wrong location)")
+            print("âœ… No location line (better than wrong location)")
         
         # Farmer name in summary and case insight must be human names
         farmer_name_in_summary = 'Rajesh Kumar Sharma'  # Expected from test data
         assert farmer_name_in_summary in summary, f"Summary must contain correct farmer name"
         assert farmer_name_in_summary in case_insight_text, f"Case insight must contain correct farmer name"
-        print("✅ Farmer name is correctly preserved in intelligence outputs")
+        print("âœ… Farmer name is correctly preserved in intelligence outputs")
         
         # Scheme line must be present when recoverable
         assert 'Scheme: Pradhan Mantri Kisan Samman Nidhi' in case_insight_text, f"Scheme line must be present and correct"
-        print("✅ Scheme line is present and correct in case insight")
+        print("âœ… Scheme line is present and correct in case insight")
         
         # Decision reasoning must not reference junk entities
         decision_reasoning = decision_support.get('reasoning', [])
         decision_reasoning_text = ' '.join(decision_reasoning)
         for junk in junk_entities:
             assert junk not in decision_reasoning_text, f"Decision reasoning must NOT contain junk entity '{junk}'. Got: {decision_reasoning_text}"
-        print("✅ Decision reasoning contains no junk business entities")
+        print("âœ… Decision reasoning contains no junk business entities")
         
-        print("\n✅ ALL STRENGTHENED ASSERTIONS PASSED!")
-        print("🛡️  Intelligence layer robust against junk business entities!")
+        print("\nâœ… ALL STRENGTHENED ASSERTIONS PASSED!")
+        print("ðŸ›¡ï¸  Intelligence layer robust against junk business entities!")
         
         # Display all intelligence outputs
-        print("\n🧠 Intelligence Layer Outputs:")
+        print("\nðŸ§  Intelligence Layer Outputs:")
         print("-" * 30)
-        print(f"� Summary: {summary}")
-        print(f"🔍 Case Insight ({len(case_insight)} points):")
+        print(f"ï¿½ Summary: {summary}")
+        print(f"ðŸ” Case Insight ({len(case_insight)} points):")
         for insight in case_insight:
-            print(f"  • {insight}")
-        print(f"⚖️  Decision: {decision.upper()}")
-        print(f"📊 Confidence: {decision_support.get('confidence', 0):.2f}")
-        print(f"💭 Reasoning:")
+            print(f"  â€¢ {insight}")
+        print(f"âš–ï¸  Decision: {decision.upper()}")
+        print(f"ðŸ“Š Confidence: {decision_support.get('confidence', 0):.2f}")
+        print(f"ðŸ’­ Reasoning:")
         for reason in decision_support.get('reasoning', []):
-            print(f"    • {reason}")
-        print(f"🔮 Predictions:")
-        print(f"  ⏱️  Processing Time: {predictions.get('processing_time', 'unknown')}")
-        print(f"  📈 Approval Likelihood: {predictions.get('approval_likelihood', 'unknown')}")
-        print(f"  ⚠️  Risk Level: {predictions.get('risk_level', 'unknown')}")
-        print(f"🤖 ML Insights:")
-        print(f"  📊 Priority Score: {ml_insights.get('priority_score', 'unknown')}")
-        print(f"  📋 Queue: {ml_insights.get('queue', 'unknown')}")
-        print(f"  🔍 Review Type: {ml_insights.get('review_type', 'unknown')}")
-        print(f"  🎯 Model Confidence: {ml_insights.get('model_confidence', 'unknown')}")
-        print(f"  ⚙️  Prediction Method: {ml_insights.get('prediction_method', 'unknown')}")
+            print(f"    â€¢ {reason}")
+        print(f"ðŸ”® Predictions:")
+        print(f"  â±ï¸  Processing Time: {predictions.get('processing_time', 'unknown')}")
+        print(f"  ðŸ“ˆ Approval Likelihood: {predictions.get('approval_likelihood', 'unknown')}")
+        print(f"  âš ï¸  Risk Level: {predictions.get('risk_level', 'unknown')}")
+        print(f"ðŸ¤– ML Insights:")
+        print(f"  ðŸ“Š Priority Score: {ml_insights.get('priority_score', 'unknown')}")
+        print(f"  ðŸ“‹ Queue: {ml_insights.get('queue', 'unknown')}")
+        print(f"  ðŸ” Review Type: {ml_insights.get('review_type', 'unknown')}")
+        print(f"  ðŸŽ¯ Model Confidence: {ml_insights.get('model_confidence', 'unknown')}")
+        print(f"  âš™ï¸  Prediction Method: {ml_insights.get('prediction_method', 'unknown')}")
         
-        print("\n✅ ALL STRICT ASSERTIONS PASSED!")
-        print("🎉 Intelligence layer successfully integrated and production-hardened!")
+        print("\nâœ… ALL STRICT ASSERTIONS PASSED!")
+        print("ðŸŽ‰ Intelligence layer successfully integrated and production-hardened!")
         return True
     
     else:
-        print(f"❌ Pipeline Processing Failed: {result.error_message}")
+        print(f"âŒ Pipeline Processing Failed: {result.error_message}")
         return False
 
 
@@ -281,17 +278,17 @@ def main():
     """Main test function"""
     import asyncio
     
-    print("🧠 Testing Intelligence Layer Integration")
+    print("ðŸ§  Testing Intelligence Layer Integration")
     print("=" * 60)
     
     success = asyncio.run(test_intelligence_integration())
     
     if success:
-        print("\n🎉 INTELLIGENCE INTEGRATION TEST PASSED!")
-        print("✅ All intelligence outputs properly integrated into pipeline")
+        print("\nðŸŽ‰ INTELLIGENCE INTEGRATION TEST PASSED!")
+        print("âœ… All intelligence outputs properly integrated into pipeline")
     else:
-        print("\n❌ INTELLIGENCE INTEGRATION TEST FAILED!")
-        print("❌ Intelligence layer not properly integrated")
+        print("\nâŒ INTELLIGENCE INTEGRATION TEST FAILED!")
+        print("âŒ Intelligence layer not properly integrated")
     
     return success
 

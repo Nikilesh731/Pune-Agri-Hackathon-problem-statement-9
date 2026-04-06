@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Any
 from enum import Enum
 
-from .document_classification import DocumentType
+from app.modules.document_processing.schema.document_classification import DocumentType
 
 
 class FieldConfidence(str, Enum):

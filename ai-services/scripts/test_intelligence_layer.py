@@ -8,12 +8,9 @@ import sys
 import os
 import json
 from pathlib import Path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'app'))
 
-app_path = Path(__file__).parent.parent / "app"
-sys.path.insert(0, str(app_path))
 
-from modules.intelligence.intelligence_service import IntelligenceService
+from app.modules.intelligence.intelligence_service import IntelligenceService
 
 
 def create_test_extracted_data(document_type: str) -> dict:
@@ -107,7 +104,7 @@ def create_test_extracted_data(document_type: str) -> dict:
 def test_intelligence_service():
     """Test the intelligence service with all document types"""
     
-    print("🧠 Intelligence Layer Test")
+    print("ðŸ§  Intelligence Layer Test")
     print("=" * 60)
     
     intelligence_service = IntelligenceService()
@@ -125,7 +122,7 @@ def test_intelligence_service():
     results = []
     
     for doc_type in document_types:
-        print(f"\n📄 Testing {doc_type.replace('_', ' ').title()}")
+        print(f"\nðŸ“„ Testing {doc_type.replace('_', ' ').title()}")
         print("-" * 40)
         
         # Create test data
@@ -134,28 +131,28 @@ def test_intelligence_service():
         try:
             # Test document summary
             summary = intelligence_service.generate_document_summary(test_data)
-            print(f"📝 Summary: {summary}")
+            print(f"ðŸ“ Summary: {summary}")
             
             # Test case insight
             case_insight = intelligence_service.generate_case_insight(test_data)
-            print(f"🔍 Case Insight:")
+            print(f"ðŸ” Case Insight:")
             for insight in case_insight:
-                print(f"  • {insight}")
+                print(f"  â€¢ {insight}")
             
             # Test decision support
             decision_support = intelligence_service.generate_decision_support(test_data)
-            print(f"⚖️  Decision: {decision_support['decision'].upper()}")
-            print(f"📊 Confidence: {decision_support['confidence']:.2f}")
-            print(f"💭 Reasoning:")
+            print(f"âš–ï¸  Decision: {decision_support['decision'].upper()}")
+            print(f"ðŸ“Š Confidence: {decision_support['confidence']:.2f}")
+            print(f"ðŸ’­ Reasoning:")
             for reason in decision_support['reasoning']:
-                print(f"    • {reason}")
+                print(f"    â€¢ {reason}")
             
             # Test predictions
             predictions = intelligence_service.generate_predictions(test_data)
-            print(f"🔮 Predictions:")
-            print(f"  ⏱️  Processing Time: {predictions['processing_time']}")
-            print(f"  📈 Approval Likelihood: {predictions['approval_likelihood']}")
-            print(f"  ⚠️  Risk Level: {predictions['risk_level']}")
+            print(f"ðŸ”® Predictions:")
+            print(f"  â±ï¸  Processing Time: {predictions['processing_time']}")
+            print(f"  ðŸ“ˆ Approval Likelihood: {predictions['approval_likelihood']}")
+            print(f"  âš ï¸  Risk Level: {predictions['risk_level']}")
             
             # Validate outputs
             validation_result = validate_intelligence_output(
@@ -169,14 +166,14 @@ def test_intelligence_service():
             })
             
             if validation_result["success"]:
-                print("✅ PASSED")
+                print("âœ… PASSED")
             else:
-                print("❌ FAILED:")
+                print("âŒ FAILED:")
                 for issue in validation_result["issues"]:
-                    print(f"    • {issue}")
+                    print(f"    â€¢ {issue}")
             
         except Exception as e:
-            print(f"❌ ERROR: {str(e)}")
+            print(f"âŒ ERROR: {str(e)}")
             results.append({
                 "document_type": doc_type,
                 "success": False,
@@ -184,24 +181,24 @@ def test_intelligence_service():
             })
     
     # Summary
-    print("\n📊 Test Summary")
+    print("\nðŸ“Š Test Summary")
     print("=" * 40)
     
     passed = sum(1 for r in results if r["success"])
     total = len(results)
     
-    print(f"✅ Passed: {passed}/{total}")
-    print(f"❌ Failed: {total - passed}/{total}")
-    print(f"📈 Success Rate: {(passed/total)*100:.1f}%")
+    print(f"âœ… Passed: {passed}/{total}")
+    print(f"âŒ Failed: {total - passed}/{total}")
+    print(f"ðŸ“ˆ Success Rate: {(passed/total)*100:.1f}%")
     
     # Show failed tests
     failed_tests = [r for r in results if not r["success"]]
     if failed_tests:
-        print("\n❌ Failed Tests:")
+        print("\nâŒ Failed Tests:")
         for test in failed_tests:
-            print(f"  • {test['document_type']}: {', '.join(test['issues'])}")
+            print(f"  â€¢ {test['document_type']}: {', '.join(test['issues'])}")
     
-    print(f"\n🎉 Intelligence Layer Test Complete!")
+    print(f"\nðŸŽ‰ Intelligence Layer Test Complete!")
     return results
 
 

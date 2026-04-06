@@ -1,8 +1,8 @@
 import re
 from typing import Dict, Optional, Any, Tuple
 
-from .base_handler import BaseHandler
-from ..utils import (
+from app.modules.document_processing.handlers.base_handler import BaseHandler
+from app.modules.document_processing.utils import (
     normalize_ocr_text,
     BoundaryAwareExtractor,
     FieldValidators,

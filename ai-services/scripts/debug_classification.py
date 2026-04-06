@@ -6,12 +6,9 @@ Debug classification for insurance claim test
 import sys
 import os
 from pathlib import Path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'app'))
 
-app_path = Path(__file__).parent.parent / "app"
-sys.path.insert(0, str(app_path))
 
-from modules.document_processing.classification_service import DocumentClassificationService
+from app.modules.document_processing.classification_service import DocumentClassificationService
 
 # Insurance claim test text
 insurance_text = """
@@ -56,15 +53,15 @@ Supporting Documents:
 def main():
     classifier = DocumentClassificationService()
     
-    print("🔍 Debugging Insurance Claim Classification")
+    print("ðŸ” Debugging Insurance Claim Classification")
     print("=" * 50)
     
     # Test classification
     result = classifier.classify_document(insurance_text)
     
-    print(f"📋 Classified Type: {result['document_type']}")
-    print(f"📊 Confidence: {result['classification_confidence']}")
-    print(f"🧠 Reasoning:")
+    print(f"ðŸ“‹ Classified Type: {result['document_type']}")
+    print(f"ðŸ“Š Confidence: {result['classification_confidence']}")
+    print(f"ðŸ§  Reasoning:")
     
     reasoning = result['classification_reasoning']
     print(f"  Keywords found: {reasoning['keywords_found']}")
@@ -72,7 +69,7 @@ def main():
     print(f"  Confidence factors: {reasoning['confidence_factors']}")
     
     # Test subsidy priority detection
-    print("\n🎯 Testing Subsidy Priority Detection")
+    print("\nðŸŽ¯ Testing Subsidy Priority Detection")
     print("-" * 40)
     
     text_lower = insurance_text.lower()
@@ -82,7 +79,7 @@ def main():
     print(f"Subsidy Reasoning: {subsidy_reasoning}")
     
     # Test insurance priority detection
-    print("\n🛡️ Testing Insurance Priority Detection")
+    print("\nðŸ›¡ï¸ Testing Insurance Priority Detection")
     print("-" * 40)
     
     insurance_score, insurance_reasoning = classifier._detect_insurance_priority(text_lower)

@@ -7,7 +7,7 @@ import uuid
 import re
 from typing import Dict, Any, Optional, List
 
-from .utils import normalize_ocr_text
+from app.modules.document_processing.utils import normalize_ocr_text
 
 
 class DocumentProcessor:

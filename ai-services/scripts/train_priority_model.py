@@ -13,10 +13,8 @@ import numpy as np
 from pathlib import Path
 
 # Add app path for imports
-app_path = Path(__file__).parent.parent / "app"
-sys.path.insert(0, str(app_path))
 
-from modules.document_processing.ml_priority import get_priority_model
+from app.modules.document_processing.ml_priority import get_priority_model
 
 def create_sample_training_data():
     """Create substantial training data with 150+ varied examples for genuine ML training"""
@@ -249,14 +247,14 @@ def save_training_data_to_csv(training_data, filepath):
 
 def main():
     """Main training function"""
-    print("🤖 Training RandomForestClassifier for Application Priority")
+    print("ðŸ¤– Training RandomForestClassifier for Application Priority")
     print("=" * 60)
     
     # Get priority model
     model = get_priority_model()
     
     # Create sample training data
-    print("📊 Creating sample training data...")
+    print("ðŸ“Š Creating sample training data...")
     training_data = create_sample_training_data()
     
     # Save training data to CSV for inspection
@@ -266,15 +264,15 @@ def main():
     csv_path = data_dir / "priority_training_data.csv"
     save_training_data_to_csv(training_data, csv_path)
     
-    print(f"✅ Created {len(training_data)} training examples")
-    print(f"📁 Training data saved to: {csv_path}")
+    print(f"âœ… Created {len(training_data)} training examples")
+    print(f"ðŸ“ Training data saved to: {csv_path}")
     
     # Train the model
-    print("\n🎯 Training RandomForestClassifier...")
+    print("\nðŸŽ¯ Training RandomForestClassifier...")
     model.train_model(training_data)
     
     # Test the trained model
-    print("\n🧪 Testing trained model...")
+    print("\nðŸ§ª Testing trained model...")
     test_cases = [
         {
             "name": "High Priority Scheme Application",
@@ -308,25 +306,25 @@ def main():
     ]
     
     for test_case in test_cases:
-        print(f"\n📋 Test Case: {test_case['name']}")
+        print(f"\nðŸ“‹ Test Case: {test_case['name']}")
         prediction = model.predict(test_case['data'])
         
-        print(f"  🎯 Priority Score: {prediction['priority_score']}")
-        print(f"  📋 Queue: {prediction['queue']}")
-        print(f"  🔍 Review Type: {prediction['review_type']}")
-        print(f"  📊 Model Confidence: {prediction['model_confidence']}")
-        print(f"  ⚙️  Prediction Method: {prediction['prediction_method']}")
+        print(f"  ðŸŽ¯ Priority Score: {prediction['priority_score']}")
+        print(f"  ðŸ“‹ Queue: {prediction['queue']}")
+        print(f"  ðŸ” Review Type: {prediction['review_type']}")
+        print(f"  ðŸ“Š Model Confidence: {prediction['model_confidence']}")
+        print(f"  âš™ï¸  Prediction Method: {prediction['prediction_method']}")
     
-    print("\n✅ Training completed successfully!")
-    print("📈 Model is ready for production use")
+    print("\nâœ… Training completed successfully!")
+    print("ðŸ“ˆ Model is ready for production use")
     
     return True
 
 if __name__ == "__main__":
     success = main()
     if success:
-        print("\n🎉 PRIORITY MODEL TRAINING COMPLETED!")
+        print("\nðŸŽ‰ PRIORITY MODEL TRAINING COMPLETED!")
     else:
-        print("\n❌ PRIORITY MODEL TRAINING FAILED!")
+        print("\nâŒ PRIORITY MODEL TRAINING FAILED!")
     
     sys.exit(0 if success else 1)

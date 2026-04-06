@@ -18,14 +18,11 @@ import sys
 import os
 import asyncio
 from pathlib import Path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'app'))
 
-app_path = Path(__file__).parent.parent / "app"
-sys.path.insert(0, str(app_path))
 
-from modules.document_processing.processors import DocumentProcessor
-from modules.document_processing.classification_service import DocumentClassificationService
-from modules.document_processing.extraction_service import DocumentExtractionService
+from app.modules.document_processing.processors import DocumentProcessor
+from app.modules.document_processing.classification_service import DocumentClassificationService
+from app.modules.document_processing.extraction_service import DocumentExtractionService
 
 
 def create_realistic_ocr_samples():
@@ -481,34 +478,34 @@ async def run_single_test(service, test_name, ocr_text, expected_type, filename)
         decision_support = data.get('decision_support', {})
         
         # Print results
-        print(f"✅ Success: {success}")
-        print(f"📋 Classified Type: {classified_type}")
-        print(f"📊 Classification Confidence: {classification_confidence:.3f}")
-        print(f"🎯 Extraction Confidence: {confidence:.3f}")
-        print(f"📝 Structured Data Fields: {len(structured_data)}")
-        print(f"⚠️  Missing Fields: {missing_fields}")
-        print(f"🚨 Risk Flags: {len(risk_flags)}")
-        print(f"💡 Decision Support: {decision_support.get('decision', 'unknown')}")
+        print(f"âœ… Success: {success}")
+        print(f"ðŸ“‹ Classified Type: {classified_type}")
+        print(f"ðŸ“Š Classification Confidence: {classification_confidence:.3f}")
+        print(f"ðŸŽ¯ Extraction Confidence: {confidence:.3f}")
+        print(f"ðŸ“ Structured Data Fields: {len(structured_data)}")
+        print(f"âš ï¸  Missing Fields: {missing_fields}")
+        print(f"ðŸš¨ Risk Flags: {len(risk_flags)}")
+        print(f"ðŸ’¡ Decision Support: {decision_support.get('decision', 'unknown')}")
         
         # Show AI fields if available
         ai_summary = data.get('ai_summary')
         if ai_summary:
-            print(f"🤖 AI Summary: {ai_summary}")
+            print(f"ðŸ¤– AI Summary: {ai_summary}")
         
         if structured_data:
-            print(f"\n📋 Extracted Key Fields:")
+            print(f"\nðŸ“‹ Extracted Key Fields:")
             for key, value in list(structured_data.items())[:8]:  # Show first 8 fields
-                print(f"  • {key}: {str(value)[:50]}{'...' if len(str(value)) > 50 else ''}")
+                print(f"  â€¢ {key}: {str(value)[:50]}{'...' if len(str(value)) > 50 else ''}")
         
         if reasoning:
-            print(f"\n🧠 Reasoning (first 3 items):")
+            print(f"\nðŸ§  Reasoning (first 3 items):")
             for reason in reasoning[:3]:
-                print(f"  • {reason}")
+                print(f"  â€¢ {reason}")
         
         if risk_flags:
-            print(f"\n🚨 Risk Flags:")
+            print(f"\nðŸš¨ Risk Flags:")
             for flag in risk_flags[:3]:  # Show first 3 flags
-                print(f"  • {flag.get('severity', 'unknown')}: {flag.get('message', 'no message')}")
+                print(f"  â€¢ {flag.get('severity', 'unknown')}: {flag.get('message', 'no message')}")
         
         # Determine if test passed with strict validation criteria
         has_reasoning_missing = any(
@@ -539,7 +536,7 @@ async def run_single_test(service, test_name, ocr_text, expected_type, filename)
                 not has_reasoning_missing
             )
         
-        print(f"\n🏁 TEST RESULT: {'✅ PASSED' if test_passed else '❌ FAILED'}")
+        print(f"\nðŸ TEST RESULT: {'âœ… PASSED' if test_passed else 'âŒ FAILED'}")
         
         return {
             'test_name': test_name,
@@ -557,7 +554,7 @@ async def run_single_test(service, test_name, ocr_text, expected_type, filename)
         }
         
     except Exception as e:
-        print(f"❌ CRASH: {str(e)}")
+        print(f"âŒ CRASH: {str(e)}")
         return {
             'test_name': test_name,
             'expected_type': expected_type,
@@ -577,7 +574,7 @@ async def run_single_test(service, test_name, ocr_text, expected_type, filename)
 def main():
     """Main test execution function"""
     
-    print("🌾 Agricultural Document Processing Pipeline - End-to-End Validation")
+    print("ðŸŒ¾ Agricultural Document Processing Pipeline - End-to-End Validation")
     print("="*80)
     print("Testing all 6 document types with realistic OCR samples")
     print("Using: DocumentProcessor with classification_service and extraction_service")
@@ -585,13 +582,13 @@ def main():
     
     # Initialize the pipeline services
     try:
-        from modules.document_processing.document_processing_service import DocumentProcessingService
+from app.modules.document_processing.document_processing_service import DocumentProcessingService
         service = DocumentProcessingService()
         
-        print("✅ Pipeline services initialized successfully")
+        print("âœ… Pipeline services initialized successfully")
         
     except Exception as e:
-        print(f"❌ Failed to initialize pipeline services: {e}")
+        print(f"âŒ Failed to initialize pipeline services: {e}")
         return
     
     # Get OCR samples
@@ -618,7 +615,7 @@ def main():
     
     # NOISY TEST CASES - Specific robustness validation
     print(f"\n{'='*80}")
-    print("🔧 ROBUSTNESS VALIDATION - NOISY DOCUMENT TESTS")
+    print("ðŸ”§ ROBUSTNESS VALIDATION - NOISY DOCUMENT TESTS")
     print(f"{'='*80}")
     
     noisy_test_cases = [
@@ -636,28 +633,28 @@ def main():
     
     # Print summary
     print(f"\n{'='*80}")
-    print("📊 FINAL TEST SUMMARY")
+    print("ðŸ“Š FINAL TEST SUMMARY")
     print(f"{'='*80}")
     
     total_tests = len(results)
     passed_tests = sum(1 for r in results if r['test_passed'])
     failed_tests = total_tests - passed_tests
     
-    print(f"📈 Total Tests: {total_tests}")
-    print(f"✅ Passed: {passed_tests}")
-    print(f"❌ Failed: {failed_tests}")
-    print(f"📊 Success Rate: {(passed_tests/total_tests)*100:.1f}%")
+    print(f"ðŸ“ˆ Total Tests: {total_tests}")
+    print(f"âœ… Passed: {passed_tests}")
+    print(f"âŒ Failed: {failed_tests}")
+    print(f"ðŸ“Š Success Rate: {(passed_tests/total_tests)*100:.1f}%")
     
     if failed_tests > 0:
-        print(f"\n❌ FAILED TESTS:")
+        print(f"\nâŒ FAILED TESTS:")
         for result in results:
             if not result['test_passed']:
-                print(f"  • {result['test_name']}")
+                print(f"  â€¢ {result['test_name']}")
                 print(f"    Expected: {result['expected_type']}, Got: {result['actual_type']}")
                 if result['error']:
                     print(f"    Error: {result['error']}")
     
-    print(f"\n🎯 Pipeline Validation Complete!")
+    print(f"\nðŸŽ¯ Pipeline Validation Complete!")
     print(f"{'='*80}")
     
     return passed_tests == total_tests
@@ -693,14 +690,14 @@ async def run_noisy_test(service, test_name, ocr_text, expected_type, filename):
         decision_support = data.get('decision_support', {})
         
         # Print results
-        print(f"✅ Success: {success}")
-        print(f"📋 Classified Type: {classified_type}")
-        print(f"📊 Classification Confidence: {classification_confidence:.3f}")
-        print(f"🎯 Extraction Confidence: {confidence:.3f}")
-        print(f"📝 Structured Data Fields: {len(structured_data)}")
-        print(f"⚠️  Missing Fields: {missing_fields}")
-        print(f"🚨 Risk Flags: {len(risk_flags)}")
-        print(f"💡 Decision Support: {decision_support.get('decision', 'unknown')}")
+        print(f"âœ… Success: {success}")
+        print(f"ðŸ“‹ Classified Type: {classified_type}")
+        print(f"ðŸ“Š Classification Confidence: {classification_confidence:.3f}")
+        print(f"ðŸŽ¯ Extraction Confidence: {confidence:.3f}")
+        print(f"ðŸ“ Structured Data Fields: {len(structured_data)}")
+        print(f"âš ï¸  Missing Fields: {missing_fields}")
+        print(f"ðŸš¨ Risk Flags: {len(risk_flags)}")
+        print(f"ðŸ’¡ Decision Support: {decision_support.get('decision', 'unknown')}")
         
         # Show AI fields if available
         summary = data.get('summary', '')
@@ -708,19 +705,19 @@ async def run_noisy_test(service, test_name, ocr_text, expected_type, filename):
         predictions = data.get('predictions', {})
         
         if summary:
-            print(f"📄 Summary: {summary}")
+            print(f"ðŸ“„ Summary: {summary}")
         if case_insight:
-            print(f"💭 Case Insight: {case_insight}")
+            print(f"ðŸ’­ Case Insight: {case_insight}")
         if predictions:
-            print(f"🔮 Predictions: {predictions}")
+            print(f"ðŸ”® Predictions: {predictions}")
         
         # Print structured data
-        print(f"\n📋 Extracted Fields:")
+        print(f"\nðŸ“‹ Extracted Fields:")
         for field, value in structured_data.items():
-            print(f"  • {field}: {value}")
+            print(f"  â€¢ {field}: {value}")
         
         # NOISY TEST SPECIFIC VALIDATION
-        print(f"\n🔍 ROBUSTNESS VALIDATION:")
+        print(f"\nðŸ” ROBUSTNESS VALIDATION:")
         validation_errors = []
         
         # Check for obvious junk in protected fields
@@ -733,22 +730,22 @@ async def run_noisy_test(service, test_name, ocr_text, expected_type, filename):
         
         if farmer_name and farmer_name.lower() in junk_names:
             validation_errors.append(f"Junk farmer_name detected: '{farmer_name}'")
-            print(f"❌ JUNK farmer_name: '{farmer_name}'")
+            print(f"âŒ JUNK farmer_name: '{farmer_name}'")
         elif farmer_name:
-            print(f"✅ Clean farmer_name: '{farmer_name}'")
+            print(f"âœ… Clean farmer_name: '{farmer_name}'")
         else:
-            print(f"✅ No farmer_name (better than wrong)")
+            print(f"âœ… No farmer_name (better than wrong)")
         
         # Reject obvious junk in location
         junk_locations = ['up mobile', 'from', 'to', 'office', 'main branch', 'district agriculture officer']
         
         if location and location.lower() in junk_locations:
             validation_errors.append(f"Junk location detected: '{location}'")
-            print(f"❌ JUNK location: '{location}'")
+            print(f"âŒ JUNK location: '{location}'")
         elif location:
-            print(f"✅ Clean location: '{location}'")
+            print(f"âœ… Clean location: '{location}'")
         else:
-            print(f"✅ No location (better than wrong)")
+            print(f"âœ… No location (better than wrong)")
         
         # Document-type specific validation
         if expected_type == 'grievance':
@@ -757,7 +754,7 @@ async def run_noisy_test(service, test_name, ocr_text, expected_type, filename):
                 junk_value = structured_data.get(junk_field, '')
                 if junk_value and junk_value.lower() in junk_names:
                     validation_errors.append(f"Junk {junk_field} detected: '{junk_value}'")
-                    print(f"❌ JUNK {junk_field}: '{junk_value}'")
+                    print(f"âŒ JUNK {junk_field}: '{junk_value}'")
             
             # Check that description doesn't contain header fragments
             description = structured_data.get('description', '')
@@ -770,7 +767,7 @@ async def run_noisy_test(service, test_name, ocr_text, expected_type, filename):
                 for junk_pattern in grievance_junk_patterns:
                     if junk_pattern in description_lower:
                         validation_errors.append(f"Grievance description contains header junk: '{junk_pattern}'")
-                        print(f"❌ GRIEVANCE DESCRIPTION JUNK: '{junk_pattern}' in description")
+                        print(f"âŒ GRIEVANCE DESCRIPTION JUNK: '{junk_pattern}' in description")
                         break
             
             # Check that address doesn't contain officer junk
@@ -781,13 +778,13 @@ async def run_noisy_test(service, test_name, ocr_text, expected_type, filename):
                 for junk_pattern in address_junk_patterns:
                     if junk_pattern in address_lower:
                         validation_errors.append(f"Grievance address contains officer junk: '{junk_pattern}'")
-                        print(f"❌ GRIEVANCE ADDRESS JUNK: '{junk_pattern}' in address")
+                        print(f"âŒ GRIEVANCE ADDRESS JUNK: '{junk_pattern}' in address")
                         break
         
         elif expected_type == 'supporting_document':
             # For supporting documents, missing farmer_name is acceptable
             if not farmer_name:
-                print(f"✅ No farmer_name in supporting document (acceptable)")
+                print(f"âœ… No farmer_name in supporting document (acceptable)")
             
             # Check that amount fields don't contain 10+ digit identifier-style numbers
             amount_fields = ['requested_amount', 'claim_amount', 'subsidy_amount', 'amount']
@@ -795,14 +792,14 @@ async def run_noisy_test(service, test_name, ocr_text, expected_type, filename):
                 amount_value = structured_data.get(amount_field, '')
                 if amount_value:
                     # Clean amount and check if it's a 10+ digit ID-style number
-                    clean_amount = str(amount_value).replace(',', '').replace('₹', '').replace('$', '').strip()
+                    clean_amount = str(amount_value).replace(',', '').replace('â‚¹', '').replace('$', '').strip()
                     if clean_amount.isdigit() and len(clean_amount) >= 10:
                         validation_errors.append(f"Supporting document {amount_field} contains ID-style number: '{amount_value}'")
-                        print(f"❌ SUPPORTING DOC AMOUNT JUNK: {amount_field} = '{amount_value}' (looks like ID)")
+                        print(f"âŒ SUPPORTING DOC AMOUNT JUNK: {amount_field} = '{amount_value}' (looks like ID)")
         
         elif expected_type == 'subsidy_claim':
             subsidy_amount = structured_data.get("requested_amount", "")
-            print(f"💰 Subsidy Requested Amount: '{subsidy_amount}'")
+            print(f"ðŸ’° Subsidy Requested Amount: '{subsidy_amount}'")
             if subsidy_amount != "260000":
                 validation_errors.append(f"Subsidy amount parsing failed: expected '260000', got '{subsidy_amount}'")
         
@@ -826,13 +823,13 @@ async def run_noisy_test(service, test_name, ocr_text, expected_type, filename):
         # 1. Amount parsing validation for baseline tests
         if expected_type == "scheme_application" and not test_name.startswith("NOISY"):
             requested_amount = structured_data.get("requested_amount", "")
-            print(f"💰 Scheme Requested Amount: '{requested_amount}'")
+            print(f"ðŸ’° Scheme Requested Amount: '{requested_amount}'")
             if requested_amount != "6000":
                 validation_errors.append(f"Scheme amount parsing failed: expected '6000', got '{requested_amount}'")
         
         elif expected_type == "insurance_claim" and not test_name.startswith("NOISY"):
             claim_amount = structured_data.get("claim_amount", "")
-            print(f"💰 Insurance Claim Amount: '{claim_amount}'")
+            print(f"ðŸ’° Insurance Claim Amount: '{claim_amount}'")
             if claim_amount != "75000":
                 validation_errors.append(f"Insurance amount parsing failed: expected '75000', got '{claim_amount}'")
         
@@ -841,7 +838,7 @@ async def run_noisy_test(service, test_name, ocr_text, expected_type, filename):
             location = structured_data.get("location", "")
             village = structured_data.get("village", "")
             district = structured_data.get("district", "")
-            print(f"📍 Location fields - Location: '{location}', Village: '{village}', District: '{district}'")
+            print(f"ðŸ“ Location fields - Location: '{location}', Village: '{village}', District: '{district}'")
             
             # Check for header junk in location fields
             junk_fragments = ["Applicant Information", "Personal Information", "Policy Information", "Scheme Details"]
@@ -851,7 +848,7 @@ async def run_noisy_test(service, test_name, ocr_text, expected_type, filename):
         
         # 3. ML model validation
         prediction_method = predictions.get("prediction_method", "")
-        print(f"🤖 Prediction Method: {prediction_method}")
+        print(f"ðŸ¤– Prediction Method: {prediction_method}")
         
         # Check if model claims to be trained but no artifact exists
         if prediction_method == "trained_random_forest":
@@ -863,7 +860,7 @@ async def run_noisy_test(service, test_name, ocr_text, expected_type, filename):
         model_path = os.path.join(os.path.dirname(__file__), '..', 'app', 'modules', 'document_processing', 'priority_model.pkl')
         if os.path.exists(model_path) and prediction_method == "rule_based_fallback":
             validation_errors.append("Model artifact exists but prediction_method is still 'rule_based_fallback' instead of 'trained_random_forest'")
-            print(f"❌ ML MODEL NOT USED: Model exists but got '{prediction_method}'")
+            print(f"âŒ ML MODEL NOT USED: Model exists but got '{prediction_method}'")
         
         # Determine test passed with stricter validation criteria
         print(f"DEBUG: missing_fields = {missing_fields}")
@@ -885,11 +882,11 @@ async def run_noisy_test(service, test_name, ocr_text, expected_type, filename):
         
         # Report validation errors
         if validation_errors:
-            print(f"\n❌ PRODUCTION HARDENING ERRORS:")
+            print(f"\nâŒ PRODUCTION HARDENING ERRORS:")
             for error in validation_errors:
                 print(f"   - {error}")
         
-        print(f"\n🎯 NOISY TEST RESULT: {'✅ PASSED' if test_passed else '❌ FAILED'}")
+        print(f"\nðŸŽ¯ NOISY TEST RESULT: {'âœ… PASSED' if test_passed else 'âŒ FAILED'}")
         if validation_errors:
             print(f"   Issues found: {len(validation_errors)}")
         
@@ -909,7 +906,7 @@ async def run_noisy_test(service, test_name, ocr_text, expected_type, filename):
         }
         
     except Exception as e:
-        print(f"❌ Test failed with error: {e}")
+        print(f"âŒ Test failed with error: {e}")
         return {
             'test_name': test_name,
             'expected_type': expected_type,

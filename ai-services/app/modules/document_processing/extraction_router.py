@@ -5,7 +5,7 @@ Purpose: Lightweight internal/testing router for direct extraction operations
 from fastapi import APIRouter, HTTPException, Form
 from typing import Optional, Dict, Any
 
-from .extraction_service import DocumentExtractionService
+from app.modules.document_processing.extraction_service import DocumentExtractionService
 
 # Create router
 router = APIRouter()
