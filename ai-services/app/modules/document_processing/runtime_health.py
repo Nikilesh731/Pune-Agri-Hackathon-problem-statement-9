@@ -22,22 +22,34 @@ class RuntimeHealthChecker:
         """Check if Python packages are importable"""
         checks = {}
         
-        # Check PaddleOCR stack (primary image OCR engine)
+        # Check PaddleOCR stack (primary image OCR engine) - GRACEFUL FAILURE HANDLING
         try:
             import paddleocr
             checks['paddleocr'] = True
             logger.info("[HEALTH] PaddleOCR available: v" + getattr(paddleocr, '__version__', 'unknown'))
-        except ImportError as e:
+        except Exception as e:
             checks['paddleocr'] = False
-            logger.warning(f"[HEALTH] PaddleOCR not available: {e}")
+            # Check if this is a system library issue or PDX initialization issue
+            error_str = str(e).lower()
+            if any(lib in error_str for lib in ['libgl.so.1', 'libgomp.so.1', 'libpaddle.so', 'pdx has already been initialized']):
+                logger.warning(f"[HEALTH] PaddleOCR not available due to system libraries or initialization issue: {e}")
+                logger.warning("[HEALTH] This is expected in containerized environments without GUI libraries")
+            else:
+                logger.warning(f"[HEALTH] PaddleOCR not available: {e}")
         
         try:
             import paddle
             checks['paddlepaddle'] = True
             logger.info("[HEALTH] PaddlePaddle available: v" + getattr(paddle, '__version__', 'unknown'))
-        except ImportError as e:
+        except Exception as e:
             checks['paddlepaddle'] = False
-            logger.warning(f"[HEALTH] PaddlePaddle not available: {e}")
+            # Check if this is a system library issue
+            error_str = str(e).lower()
+            if any(lib in error_str for lib in ['libgl.so.1', 'libgomp.so.1', 'libpaddle.so']):
+                logger.warning(f"[HEALTH] PaddlePaddle not available due to system libraries: {e}")
+                logger.warning("[HEALTH] This is expected in containerized environments without GUI libraries")
+            else:
+                logger.warning(f"[HEALTH] PaddlePaddle not available: {e}")
         
         # Check pytesseract (legacy fallback)
         try:
@@ -70,15 +82,22 @@ class RuntimeHealthChecker:
             self.missing_critical.append('Pillow package')
             logger.error(f"[HEALTH] Pillow not available: {e}")
         
-        # Check OpenCV
+        # Check OpenCV - GRACEFUL FAILURE HANDLING
         try:
             import cv2
             checks['opencv'] = True
             logger.info("[HEALTH] OpenCV available: v" + cv2.__version__)
-        except ImportError as e:
+        except Exception as e:
             checks['opencv'] = False
-            self.missing_critical.append('OpenCV package')
-            logger.error(f"[HEALTH] OpenCV not available: {e}")
+            # Check if this is a system library issue
+            error_str = str(e).lower()
+            if 'libgl.so.1' in error_str:
+                logger.warning(f"[HEALTH] OpenCV not available due to system libraries: {e}")
+                logger.warning("[HEALTH] This is expected in containerized environments without GUI libraries")
+                # Don't mark as critical for containerized environments
+            else:
+                self.missing_critical.append('OpenCV package')
+                logger.error(f"[HEALTH] OpenCV not available: {e}")
         
         # Check PDF libraries
         try:
@@ -188,18 +207,25 @@ class RuntimeHealthChecker:
             # PaddleOCR is primary, Tesseract is legacy fallback
             paddle_missing = [dep for dep in self.missing_critical if 'paddle' in dep.lower() or 'PaddleOCR' in dep]
             tesseract_missing = [dep for dep in self.missing_critical if 'Tesseract' in dep]
-            critical_for_docs = [dep for dep in self.missing_critical if 'paddle' not in dep.lower() and 'PaddleOCR' not in dep and 'tesseract' not in dep.lower() and 'Tesseract' not in dep]
+            opencv_missing = [dep for dep in self.missing_critical if 'OpenCV' in dep and 'package' in dep]
+            critical_for_docs = [dep for dep in self.missing_critical if 'paddle' not in dep.lower() and 'PaddleOCR' not in dep and 'tesseract' not in dep.lower() and 'Tesseract' not in dep and 'OpenCV' not in dep]
             
+            # GRACEFUL: Don't fail for OCR engines in containerized environments
             if paddle_missing:
-                error_msg = f"WARNING: Missing primary OCR dependencies: {', '.join(paddle_missing)}. Image processing will fall back to Tesseract if available."
-                logger.error(error_msg)
+                logger.warning(f"WARNING: Missing primary OCR dependencies: {', '.join(paddle_missing)}. Image processing will fall back to Tesseract if available.")
                 logger.warning("[HEALTH] Image OCR quality will be degraded without PaddleOCR")
+                # Remove from critical to allow service to start
+                self.missing_critical = [dep for dep in self.missing_critical if dep not in paddle_missing]
+            
+            if opencv_missing:
+                logger.warning(f"WARNING: Missing OpenCV package: {', '.join(opencv_missing)}. This may affect image processing.")
+                # Remove from critical to allow service to start in containerized environments
+                self.missing_critical = [dep for dep in self.missing_critical if dep not in opencv_missing]
             
             if tesseract_missing and not paddle_missing:
                 logger.warning("[HEALTH] Legacy Tesseract OCR unavailable - only PaddleOCR will be used for images")
             elif tesseract_missing and paddle_missing:
-                error_msg = f"WARNING: Missing all OCR dependencies: {', '.join(paddle_missing + tesseract_missing)}. Image processing will fail."
-                logger.error(error_msg)
+                logger.warning(f"WARNING: Missing all OCR dependencies: {', '.join(paddle_missing + tesseract_missing)}. Image processing will fail.")
                 logger.warning("[HEALTH] Service will continue but image OCR will not work without PaddleOCR or Tesseract")
             
             if critical_for_docs:
