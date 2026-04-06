@@ -56,7 +56,6 @@ class DocumentProcessingService:
         
         # Lazy OCR service initialization - only when needed
         self._ocr_service = None
-        self.paddle_ocr_service = None
 
         # Initialize Docling ingestion service (primary ingestion layer)
         try:
@@ -86,8 +85,17 @@ class DocumentProcessingService:
 
     def _get_ocr_service(self):
         """Lazy initialization of OCR service"""
-        self._ocr_service = None
-        return None
+        logger = logging.getLogger(__name__)
+        if not hasattr(self, "_ocr_service") or self._ocr_service is None:
+            try:
+                from .tesseract_service import TesseractService
+
+                self._ocr_service = TesseractService()
+                logger.info("[OCR] Tesseract service initialized successfully")
+            except Exception as e:
+                logger.warning(f"[OCR] Tesseract service initialization failed: {e}")
+                self._ocr_service = None
+        return self._ocr_service
 
     # --- Defensive helpers -------------------------------------------------
     def _safe_dict(self, val: Any) -> Dict[str, Any]:
@@ -2204,107 +2212,11 @@ class DocumentProcessingService:
     
     def _extract_text_from_image(self, file_content: bytes, filename: str) -> str:
         """Extract text from image bytes using Tesseract OCR."""
-        import logging
-        logger = logging.getLogger(__name__)
+        ocr_service = self._get_ocr_service()
+        if ocr_service is None:
+            raise ValueError("OCR_FAILURE: Tesseract OCR service unavailable")
 
-        import io
-        from PIL import Image
-        import PIL.ImageEnhance
-        import PIL.ImageFilter
-        import pytesseract
-
-        tesseract_path = self._resolve_tesseract_binary()
-        if not tesseract_path:
-            raise ValueError("OCR_FAILURE: Tesseract binary not found")
-
-        pytesseract.pytesseract.tesseract_cmd = tesseract_path
-        logger.info(f"[OCR] Using Tesseract at: {tesseract_path}")
-        
-        try:
-            image = PIL.Image.open(io.BytesIO(file_content))
-
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-
-            enhancer = PIL.ImageEnhance.Contrast(image)
-            image = enhancer.enhance(2.0)
-
-            gray_image = image.convert('L')
-
-            try:
-                import numpy as np
-                img_array = np.array(gray_image)
-                threshold = 128
-                img_array = np.where(img_array > threshold, 255, 0).astype(np.uint8)
-                processed_image = Image.fromarray(img_array, mode='L')
-            except ImportError:
-                processed_image = gray_image.point(lambda x: 0 if x < 128 else 255, mode='1')
-
-            try:
-                tesseract_config = get_tesseract_config()
-                language_candidates = self._get_ocr_language_candidates()
-
-                extracted_text = ""
-                selected_language = ""
-                last_language_error = None
-
-                for language_code in language_candidates:
-                    try:
-                        if tesseract_config:
-                            extracted_text = pytesseract.image_to_string(
-                                processed_image,
-                                lang=language_code,
-                                config=tesseract_config,
-                            )
-                        else:
-                            extracted_text = pytesseract.image_to_string(
-                                processed_image,
-                                lang=language_code,
-                            )
-                        selected_language = language_code
-                        break
-                    except Exception as lang_error:
-                        last_language_error = lang_error
-                        logger.warning(f"[OCR] OCR failed with {language_code}, trying fallback: {lang_error}")
-
-                if not extracted_text.strip() and last_language_error is not None:
-                    raise last_language_error
-
-                logger.info(f"[OCR] OCR completed for {filename} using {selected_language or 'eng'}")
-            except Exception as lang_error:
-                logger.warning(f"[OCR] OCR language fallback failed for {filename}: {lang_error}")
-                if get_tesseract_config():
-                    extracted_text = pytesseract.image_to_string(processed_image, lang="eng", config=get_tesseract_config())
-                else:
-                    extracted_text = pytesseract.image_to_string(processed_image, lang="eng")
-
-            text_length = len(extracted_text.strip())
-
-            if text_length == 0:
-                raise ValueError("OCR failed: no text could be extracted from image")
-
-            if text_length < 20:
-                logger.warning(f"[OCR] Very low text extraction from image {filename}: {text_length} chars")
-                extracted_text = f"[LOW_OCR_QUALITY] {extracted_text.strip()}"
-
-            ocr_error_patterns = [
-                "|||||||", "||||||", "|||||", "||||",  # Vertical lines (common in handwritten forms)
-                "_____", "____", "___",  # Underlines
-                "[illegible]", "[unreadable]", "[unclear]"  # Explicit illegibility markers
-            ]
-
-            for pattern in ocr_error_patterns:
-                if pattern in extracted_text.lower():
-                    logger.warning(f"[OCR] Detected handwriting pattern '{pattern}' in {filename}")
-                    extracted_text = f"[HANDWRITING_DETECTED] {extracted_text.strip()}"
-                    break
-
-            logger.info(f"[OCR] Image OCR extraction complete: {text_length} chars")
-            return extracted_text.strip()
-
-        except Exception as ocr_error:
-            logger.error(f"[OCR] Tesseract OCR processing failed: {ocr_error}")
-            raise ValueError(f"OCR_FAILURE: Tesseract extraction failed - {str(ocr_error)}")
+        return ocr_service.extract_text_from_image_bytes(file_content, filename)
     
     def _extract_text_from_text_file(self, file_content: bytes) -> str:
         """Extract text from text file bytes"""
