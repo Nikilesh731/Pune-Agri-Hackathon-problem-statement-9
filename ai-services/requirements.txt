@@ -23,7 +23,7 @@ opencv-python-headless==4.9.0.80
 numpy==1.26.4
 
 # Document processing (CORE - Docling for primary ingestion)
-docling==1.30.0
+docling==2.50.0
 
 
 # Legacy document support
