@@ -50,7 +50,35 @@ class MLService:
             priority_score, queue = self._calculate_meaningful_priority(features, extracted_data)
             risk_level, risk_factors = self._calculate_meaningful_risk(features, extracted_data)
             
-            # Build comprehensive ML insights
+            # Build comprehensive ML insights with detailed reasoning
+            reasoning = []
+            
+            # Add reasoning based on analysis
+            if risk_level == 'high':
+                reasoning.append("High risk due to critical missing fields or low confidence")
+            elif risk_level == 'medium':
+                reasoning.append("Medium risk due to some missing fields or moderate confidence")
+            else:
+                reasoning.append("Low risk - complete extraction with good confidence")
+            
+            # Add queue reasoning
+            if queue == 'VERIFICATION_QUEUE':
+                reasoning.append("Requires verification due to missing information")
+            elif queue == 'HIGH_PRIORITY':
+                reasoning.append("High priority - urgent attention required")
+            elif queue == 'FINANCIAL_REVIEW':
+                reasoning.append("Financial review required due to high value amount")
+            else:
+                reasoning.append("Normal processing queue")
+            
+            # Add priority reasoning
+            if priority_score >= 80:
+                reasoning.append(f"High priority score ({priority_score}) - expedite processing")
+            elif priority_score >= 60:
+                reasoning.append(f"Medium priority score ({priority_score}) - standard processing")
+            else:
+                reasoning.append(f"Normal priority score ({priority_score}) - routine processing")
+            
             ml_insights = {
                 'risk_level': risk_level,
                 'auto_decision': ml_prediction.get('auto_decision', 'review'),
@@ -59,6 +87,7 @@ class MLService:
                 'queue': queue,
                 'processing_time_estimate': self._estimate_processing_time_from_features(features),
                 'approval_likelihood': self._calculate_approval_likelihood_from_features(features),
+                'reasoning': reasoning,  # Add detailed reasoning
                 'feature_analysis': {
                     'document_type': extracted_data.get('document_type', 'unknown'),
                     'missing_fields_count': len(extracted_data.get('missing_fields', [])),

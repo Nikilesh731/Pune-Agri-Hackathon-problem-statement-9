@@ -371,7 +371,8 @@ class DocumentProcessor:
                 pass
         
         # Return empty string if no OCR text available
-        return ""
+        logger.error("[OCR] No OCR text available for processing")
+        raise ValueError("No OCR text available for processing - file may be corrupted or unreadable")
     
     def _build_validation_summary(self, document_type: str, structured_data: Dict[str, Any], missing_fields: List[str]) -> Dict[str, Any]:
         """Build validation summary - OPTIMIZED: Early exit for common cases"""

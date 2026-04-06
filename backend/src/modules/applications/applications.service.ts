@@ -80,6 +80,78 @@ function mapAiResultToApplicationStatus(
   return 'CASE_READY';
 }
 
+/**
+ * Resolve display workflow state - Single source of truth for frontend status display
+ * Priority logic for consistent status determination across the system
+ */
+export function resolveDisplayWorkflowState(application: any): {
+  status: string,
+  queue?: string,
+  isUnderReview: boolean,
+  isApproved: boolean,
+  isRejected: boolean,
+  isCaseReady: boolean
+} {
+  // Extract data with safe fallbacks
+  const extractedData = application.extractedData || {}
+  const mlInsights = extractedData.ml_insights || extractedData.predictions || {}
+  const decisionSupport = extractedData.decision_support || {}
+  const riskFlags = extractedData.risk_flags || []
+  const missingFields = extractedData.missing_fields || []
+  
+  // Core conditions for UNDER_REVIEW status
+  const isInVerificationQueue = application.queue === 'VERIFICATION_QUEUE' || mlInsights.queue === 'VERIFICATION_QUEUE'
+  const needsManualReview = ['review', 'manual_review'].includes(decisionSupport.decision)
+  const hasMissingFields = missingFields.length > 0
+  const hasRiskFlags = riskFlags.length > 0
+  
+  // Priority logic as specified
+  if (isInVerificationQueue || needsManualReview || hasMissingFields || hasRiskFlags) {
+    return {
+      status: 'UNDER_REVIEW',
+      queue: application.queue || mlInsights.queue || 'NORMAL',
+      isUnderReview: true,
+      isApproved: false,
+      isRejected: false,
+      isCaseReady: false
+    }
+  }
+  
+  // Check for approved status
+  if (application.status === 'APPROVED' || decisionSupport.decision === 'approve') {
+    return {
+      status: 'APPROVED',
+      queue: application.queue || mlInsights.queue || 'NORMAL',
+      isUnderReview: false,
+      isApproved: true,
+      isRejected: false,
+      isCaseReady: false
+    }
+  }
+  
+  // Check for rejected status
+  if (application.status === 'REJECTED' || decisionSupport.decision === 'reject') {
+    return {
+      status: 'REJECTED',
+      queue: application.queue || mlInsights.queue || 'NORMAL',
+      isUnderReview: false,
+      isApproved: false,
+      isRejected: true,
+      isCaseReady: false
+    }
+  }
+  
+  // Default to CASE_READY
+  return {
+    status: 'CASE_READY',
+    queue: application.queue || mlInsights.queue || 'NORMAL',
+    isUnderReview: false,
+    isApproved: false,
+    isRejected: false,
+    isCaseReady: true
+  }
+}
+
 import crypto from 'crypto'
 
 /**
@@ -494,7 +566,42 @@ class ApplicationsService {
         }
       }
 
-      // LEVEL 3: Fallback filename+size check (legacy compatibility)
+      // LEVEL 3: Semantic duplicate detection (same farmer + similar data)
+      // Only run if we have extracted data to analyze
+      if (extractedData && (extractedData.structured_data || extractedData.canonical)) {
+        const semanticMatch = await this._checkSemanticDuplicate(extractedData, applicantId)
+        
+        if (semanticMatch.isDuplicate) {
+          const latestMatch = semanticMatch.existingApplication
+          console.log('[DUP] semantic duplicate found - same farmer + similar data')
+          
+          const isActive = isActiveStatus(latestMatch.status)
+          const canResubmit = allowsResubmission(latestMatch.status)
+
+          if (isActive) {
+            console.log('[DUP] blocked - semantic duplicate active')
+            return {
+              isDuplicate: true,
+              canResubmit: false,
+              existingApplicationId: latestMatch.id,
+              existingStatus: latestMatch.status,
+              blockReason: 'Similar document from the same farmer already under processing',
+              duplicateType: 'same_content'
+            }
+          } else if (canResubmit) {
+            console.log('[DUP] resubmission allowed - semantic duplicate in resubmittable state')
+            return {
+              isDuplicate: true,
+              canResubmit: true,
+              existingApplicationId: latestMatch.id,
+              existingStatus: latestMatch.status,
+              duplicateType: 'same_content'
+            }
+          }
+        }
+      }
+
+      // LEVEL 4: Fallback filename+size check (legacy compatibility)
       const filenameMatches = await applicationsRepository.findApplicationsByFileNameAndSize(
         fileName,
         fileSize,
@@ -1828,6 +1935,198 @@ class ApplicationsService {
       console.error('[DASHBOARD] Error getting dashboard metrics:', error);
       throw error;
     }
+  }
+
+  /**
+   * LEVEL 3: Semantic duplicate detection - same farmer + similar data
+   */
+  private async _checkSemanticDuplicate(
+    extractedData: any,
+    applicantId: string
+  ): Promise<{
+    isDuplicate: boolean
+    existingApplication?: any
+    confidence?: number
+  }> {
+    try {
+      console.log('[SEMANTIC DUP] Starting semantic duplicate analysis')
+      
+      // Extract key identity fields from current document
+      const structured = (extractedData.structured_data || {}) as any
+      const canonical = (extractedData.canonical || {}) as any
+      
+      // Build identity signature from multiple fields
+      const currentSignature = {
+        farmer_name: this._normalizeText(structured.farmer_name || canonical.applicant?.name || ''),
+        aadhaar_number: this._normalizeText(structured.aadhaar_number || canonical.applicant?.aadhaar_number || ''),
+        mobile_number: this._normalizeText(structured.mobile_number || structured.contact_number || canonical.applicant?.contact?.mobile || ''),
+        village: this._normalizeText(structured.village || structured.location || ''),
+        district: this._normalizeText(structured.district || ''),
+        document_type: this._normalizeText((extractedData as any).document_type || '')
+      }
+      
+      console.log('[SEMANTIC DUP] Current signature:', {
+        ...currentSignature,
+        aadhaar_number: currentSignature.aadhaar_number ? currentSignature.aadhaar_number.substring(0, 4) + '...' : 'none'
+      })
+      
+      // Get recent applications from the same applicant (last 30 days)
+      const thirtyDaysAgo = new Date()
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+      
+      const recentApplications = await applicationsRepository.findRecentApplicationsByApplicant(
+        applicantId,
+        thirtyDaysAgo.toISOString()
+      )
+      
+      console.log(`[SEMANTIC DUP] Found ${recentApplications.length} recent applications for analysis`)
+      
+      for (const existingApp of recentApplications) {
+        const existingExtracted = (existingApp.extractedData || {}) as any
+        const existingStructured = (existingExtracted.structured_data || {}) as any
+        const existingCanonical = (existingExtracted.canonical || {}) as any
+        
+        // Build signature for existing application
+        const existingSignature = {
+          farmer_name: this._normalizeText(existingStructured.farmer_name || existingCanonical.applicant?.name || ''),
+          aadhaar_number: this._normalizeText(existingStructured.aadhaar_number || existingCanonical.applicant?.aadhaar_number || ''),
+          mobile_number: this._normalizeText(existingStructured.mobile_number || existingStructured.contact_number || existingCanonical.applicant?.contact?.mobile || ''),
+          village: this._normalizeText(existingStructured.village || existingStructured.location || ''),
+          district: this._normalizeText(existingStructured.district || ''),
+          document_type: this._normalizeText(existingExtracted.document_type || '')
+        }
+        
+        // Calculate similarity score
+        const similarity = this._calculateSemanticSimilarity(currentSignature, existingSignature)
+        
+        console.log(`[SEMANTIC DUP] Similarity with app ${existingApp.id}: ${similarity.toFixed(2)}`)
+        
+        // High similarity threshold (0.8) for semantic duplicate
+        if (similarity >= 0.8) {
+          console.log(`[SEMANTIC DUP] Semantic duplicate detected with app ${existingApp.id}`)
+          return {
+            isDuplicate: true,
+            existingApplication: existingApp,
+            confidence: similarity
+          }
+        }
+      }
+      
+      console.log('[SEMANTIC DUP] No semantic duplicates found')
+      return { isDuplicate: false }
+      
+    } catch (error) {
+      console.error('[SEMANTIC DUP] Error in semantic duplicate check:', error)
+      return { isDuplicate: false }
+    }
+  }
+
+  /**
+   * Calculate semantic similarity between two document signatures
+   */
+  private _calculateSemanticSimilarity(sig1: any, sig2: any): number {
+    let totalScore = 0
+    let fieldCount = 0
+    
+    // Field weights based on importance for identity matching
+    const fieldWeights = {
+      farmer_name: 0.3,
+      aadhaar_number: 0.35,
+      mobile_number: 0.2,
+      village: 0.1,
+      district: 0.05
+    }
+    
+    for (const [field, weight] of Object.entries(fieldWeights)) {
+      const value1 = sig1[field] || ''
+      const value2 = sig2[field] || ''
+      
+      if (value1 && value2) {
+        // Exact match gets full weight
+        if (value1 === value2) {
+          totalScore += weight
+        } else {
+          // Partial match for names (fuzzy matching)
+          if (field === 'farmer_name') {
+            const nameSimilarity = this._calculateStringSimilarity(value1, value2)
+            totalScore += weight * nameSimilarity
+          } else if (field === 'village' || field === 'district') {
+            // Location similarity - check if one contains the other
+            const locationSimilarity = value1.includes(value2) || value2.includes(value1) ? 0.8 : 0
+            totalScore += weight * locationSimilarity
+          }
+        }
+        fieldCount++
+      }
+    }
+    
+    // Normalize by total weight of compared fields
+    const totalWeight = fieldCount > 0 ? 
+      Object.values(fieldWeights).reduce((sum, w, idx) => idx < fieldCount ? sum + w : sum, 0) : 1
+    
+    return totalScore / totalWeight
+  }
+
+  /**
+   * Calculate string similarity using simple character-based approach
+   */
+  private _calculateStringSimilarity(str1: string, str2: string): number {
+    if (str1 === str2) return 1.0
+    
+    // Remove spaces and convert to lowercase for comparison
+    const s1 = str1.replace(/\s/g, '').toLowerCase()
+    const s2 = str2.replace(/\s/g, '').toLowerCase()
+    
+    if (s1 === s2) return 1.0
+    if (s1.length === 0 || s2.length === 0) return 0.0
+    
+    // Simple Levenshtein distance approximation
+    const longer = s1.length > s2.length ? s1 : s2
+    const shorter = s1.length > s2.length ? s2 : s1
+    
+    if (longer.length === 0) return 1.0
+    
+    const editDistance = this._levenshteinDistance(longer, shorter)
+    return (longer.length - editDistance) / longer.length
+  }
+
+  /**
+   * Simple Levenshtein distance implementation
+   */
+  private _levenshteinDistance(str1: string, str2: string): number {
+    const matrix = []
+    
+    for (let i = 0; i <= str2.length; i++) {
+      matrix[i] = [i]
+    }
+    
+    for (let j = 0; j <= str1.length; j++) {
+      matrix[0][j] = j
+    }
+    
+    for (let i = 1; i <= str2.length; i++) {
+      for (let j = 1; j <= str1.length; j++) {
+        if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+          matrix[i][j] = matrix[i - 1][j - 1]
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1,
+            matrix[i][j - 1] + 1,
+            matrix[i - 1][j] + 1
+          )
+        }
+      }
+    }
+    
+    return matrix[str2.length][str1.length]
+  }
+
+  /**
+   * Normalize text for comparison
+   */
+  private _normalizeText(text: string): string {
+    if (!text) return ''
+    return text.toString().trim().toLowerCase().replace(/\s+/g, ' ')
   }
 }
 

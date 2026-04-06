@@ -1,6 +1,6 @@
 # PROJECT_BRAIN
 
-Generated: 2026-04-06T04:15:18.956Z
+Generated: 2026-04-06T07:46:33.825Z
 
 ## Purpose
 
@@ -158,6 +158,12 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 - Path: `ai-services/app/modules/document_processing/reasoning_engine.py`
 - Summary: Reasoning Engine for Enhanced Decision Support Purpose: Advanced reasoning and decision support for agricultural documents
 - Exports/Defines: ReasoningType, ReasoningInsight, ReasoningEngine, __init__
+
+### runtime_health.py
+
+- Path: `ai-services/app/modules/document_processing/runtime_health.py`
+- Summary: Runtime Health Check Module Purpose: Ensure all required dependencies are available at startup
+- Exports/Defines: RuntimeHealthChecker, __init__, check_python_dependencies
 
 ### semantic_extractor.py
 
@@ -406,6 +412,12 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 
 - Path: `backend/src/modules/applications/applications.types.ts`
 - Summary: Applications Types Purpose: TypeScript interfaces and types for application management
+
+### documentNormalization.service.ts
+
+- Path: `backend/src/modules/applications/documentNormalization.service.ts`
+- Summary: Document Normalization Service Purpose: Unified format-aware preprocessing for all document types Creates consistent extraction input regardless of source format (PDF, image, etc.)
+- Exports/Defines: DocumentNormalizationService
 
 ### index.ts
 

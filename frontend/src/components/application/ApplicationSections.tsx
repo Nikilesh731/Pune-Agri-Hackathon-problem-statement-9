@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { MappedApplication, normalizePriorityScore } from '../../utils/applicationDetailMapper'
+import { MappedApplication, normalizePriorityScore, resolveDisplayWorkflowState } from '../../utils/applicationDetailMapper'
 import { SectionCard } from '../ui/SectionCard'
 import { StatusBadge } from '../ui/StatusBadge'
 import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline'
@@ -21,6 +21,7 @@ export function ApplicationSections({ application }: ApplicationSectionsProps) {
   // Use only normalized/mapped data
   const normalizedData = (application as any).normalizedData || {}
   const extractedFields = normalizedData.extractedFields || {}
+  const workflow = resolveDisplayWorkflowState(application)
 
   if (!normalizedData || Object.keys(normalizedData).length === 0) {
     return <div className="text-gray-500">No processed data available</div>
@@ -329,7 +330,7 @@ export function ApplicationSections({ application }: ApplicationSectionsProps) {
                   <div className="text-sm text-gray-600">Priority Score</div>
                 </div>
                 <div className="p-3 bg-white rounded-lg border text-center">
-                  <div className="text-lg font-bold">{String((normalizedData.mlInsights.queue || '').replace('_',' ').toUpperCase() || 'NORMAL')}</div>
+                  <div className="text-lg font-bold">{workflow.displayQueueLabel.replace('_',' ').toUpperCase()}</div>
                   <div className="text-sm text-gray-600">Queue</div>
                 </div>
                 <div className="p-3 bg-white rounded-lg border text-center">

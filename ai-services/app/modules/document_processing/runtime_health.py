@@ -41,15 +41,7 @@ class RuntimeHealthChecker:
             self.missing_critical.append('python-docx package')
             logger.error(f"[HEALTH] python-docx not available: {e}")
         
-        # Check textract
-        try:
-            import textract
-            checks['textract'] = True
-            logger.info("[HEALTH] textract available")
-        except ImportError as e:
-            checks['textract'] = False
-            self.missing_critical.append('textract package')
-            logger.error(f"[HEALTH] textract not available: {e}")
+        # REMOVED: textract is no longer required - legacy .doc support intentionally removed
         
         # Check Pillow (for image processing)
         try:
@@ -98,6 +90,7 @@ class RuntimeHealthChecker:
         
         # Check Tesseract binary with enhanced Railway detection
         tesseract_found = False
+        tesseract_version = None
         
         # Method 1: Check PATH directly
         try:
@@ -114,6 +107,7 @@ class RuntimeHealthChecker:
                                               capture_output=True, text=True, timeout=10)
                 if version_result.returncode == 0:
                     version_line = version_result.stdout.split('\n')[0] if version_result.stdout else ''
+                    tesseract_version = version_line
                     logger.info(f"[HEALTH] Tesseract version: {version_line}")
                 else:
                     logger.warning("[HEALTH] Could not get Tesseract version")
@@ -131,15 +125,20 @@ class RuntimeHealthChecker:
                     checks['tesseract_binary'] = True
                     tesseract_found = True
                     version_line = result.stdout.split('\n')[0] if result.stdout else ''
+                    tesseract_version = version_line
                     logger.info(f"[HEALTH] Tesseract binary found in PATH: {version_line}")
                 else:
                     checks['tesseract_binary'] = False
-                    self.missing_critical.append('Tesseract system binary')
-                    logger.error("[HEALTH] Tesseract binary not found or not working")
+                    logger.warning("[HEALTH] Tesseract binary not found or not working")
             except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
                 checks['tesseract_binary'] = False
-                self.missing_critical.append('Tesseract system binary')
-                logger.error(f"[HEALTH] Tesseract binary check failed: {e}")
+                logger.warning(f"[HEALTH] Tesseract binary check failed: {e}")
+        
+        # Store Tesseract info for health reporting
+        if tesseract_found:
+            logger.info("[HEALTH] Image OCR: READY")
+        else:
+            logger.warning("[HEALTH] Image OCR: UNAVAILABLE - Tesseract binary not found")
         
         return checks
     
@@ -194,15 +193,17 @@ class RuntimeHealthChecker:
     def fail_if_missing_critical(self) -> None:
         """Fail fast if critical dependencies are missing"""
         if self.missing_critical:
-            # PART 1: Allow PDF/DOC/DOCX to work without Tesseract, but fail clearly for images
+            # PART 1: Allow PDF/DOCX to work without Tesseract, but fail clearly for images
             critical_for_images = [dep for dep in self.missing_critical if 'Tesseract' in dep]
+            critical_for_docs = [dep for dep in self.missing_critical if 'Tesseract' not in dep and 'textract' not in dep]
+            
             if critical_for_images:
-                error_msg = f"CRITICAL: Missing required dependencies for image OCR: {', '.join(critical_for_images)}. Image processing will fail."
+                error_msg = f"WARNING: Missing dependencies for image OCR: {', '.join(critical_for_images)}. Image processing will fail."
                 logger.error(error_msg)
-                # Don't fail the entire service - just log clearly that images won't work
                 logger.warning("[HEALTH] Service will continue but image OCR will not work without Tesseract")
-            else:
-                error_msg = f"CRITICAL: Missing required dependencies: {', '.join(self.missing_critical)}"
+            
+            if critical_for_docs:
+                error_msg = f"CRITICAL: Missing required dependencies: {', '.join(critical_for_docs)}"
                 logger.error(error_msg)
                 raise RuntimeError(error_msg)
         else:

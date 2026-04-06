@@ -6,7 +6,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { applicationsService } from '../services/applicationsService'
-import { mapApplicationsToList, normalizePriorityScore } from '../utils/applicationDetailMapper'
+import { mapApplicationsToList, normalizePriorityScore, resolveDisplayWorkflowState } from '../utils/applicationDetailMapper'
 import { PageHeader } from '../components/ui/PageHeader'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { LoadingState } from '../components/ui/LoadingState'
@@ -370,7 +370,7 @@ export function ApplicationsPage() {
                           {application.type.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <StatusBadge status={application.status} />
+                          <StatusBadge status={resolveDisplayWorkflowState(application).displayStatusText.toLowerCase()} />
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center gap-2">

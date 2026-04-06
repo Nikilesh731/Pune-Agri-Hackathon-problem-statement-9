@@ -1,6 +1,6 @@
 # Repo Map
 
-> Generated automatically on 2026-04-06T04:14:59.335Z
+> Generated automatically on 2026-04-06T07:46:29.027Z
 > Do not edit manually - run `npm run repo:map`
 
 ## Project Structure
@@ -121,6 +121,7 @@ backend/
   │   │   │   └── migration.sql
   │   │   ├── 20260402132927_add_case_grouping
   │   │   │   └── migration.sql
+  │   │   ├── add_raw_file_hash.sql
   │   │   └── migration_lock.toml
   │   └── schema.prisma
   ├── scripts
@@ -153,6 +154,7 @@ backend/
   │   │   │   ├── applications.routes.ts
   │   │   │   ├── applications.service.ts
   │   │   │   ├── applications.types.ts
+  │   │   │   ├── documentNormalization.service.ts
   │   │   │   └── index.ts
   │   │   └── cases
   │   │       └── cases.service.ts
@@ -227,6 +229,7 @@ ai-services/
   │   │   │   ├── priority_model.pkl
   │   │   │   ├── processors.py
   │   │   │   ├── reasoning_engine.py
+  │   │   │   ├── runtime_health.py
   │   │   │   ├── semantic_extractor.py
   │   │   │   ├── service_schema.py
   │   │   │   ├── unified_extraction_orchestrator.py
@@ -260,6 +263,7 @@ ai-services/
   │   └── train_priority_model.py
   ├── debug_amount.py
   ├── debug_structure.py
+  ├── nixpacks.toml
   ├── README.md
   ├── requirements.txt
   ├── runtime.txt

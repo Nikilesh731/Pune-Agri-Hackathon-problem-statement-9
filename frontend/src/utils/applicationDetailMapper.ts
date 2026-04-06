@@ -865,6 +865,60 @@ export interface SafeApplicationState {
   normalizedData: any
 }
 
+/**
+ * Resolve display workflow state - SINGLE SOURCE OF TRUTH for status display
+ * Prevents contradictory CASE_READY + Under review + VERIFICATION_QUEUE combinations
+ */
+export interface DisplayWorkflowState {
+  displayStatusText: string
+  displayBadgeLabel: string
+  displayQueueLabel: string
+  isUnderReview: boolean
+}
+
+export function resolveDisplayWorkflowState(application: any): DisplayWorkflowState {
+  const normalizedData = application.normalizedData || {}
+  const mlInsights = normalizedData.mlInsights || {}
+  const decisionSupport = normalizedData.decisionSupport || {}
+  const missingFields = normalizedData.missingFields || []
+  const riskFlags = normalizedData.riskFlags || []
+  
+  // Check if application should be marked as UNDER_REVIEW
+  const needsReview = (
+    mlInsights.queue === 'VERIFICATION_QUEUE' ||
+    ['review', 'manual_review'].includes(decisionSupport?.decision) ||
+    missingFields.length > 0 ||
+    riskFlags.some((flag: any) => flag.severity && ['medium', 'high'].includes(flag.severity))
+  )
+  
+  if (needsReview) {
+    return {
+      displayStatusText: 'UNDER_REVIEW',
+      displayBadgeLabel: 'Under review',
+      displayQueueLabel: mlInsights.queue || 'VERIFICATION_QUEUE',
+      isUnderReview: true
+    }
+  }
+  
+  // Use explicit application status if available
+  if (application.status && ['approved', 'rejected', 'requires_action'].includes(application.status)) {
+    return {
+      displayStatusText: application.status.toUpperCase(),
+      displayBadgeLabel: application.status.replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
+      displayQueueLabel: mlInsights.queue || 'NORMAL',
+      isUnderReview: false
+    }
+  }
+  
+  // Default to CASE_READY
+  return {
+    displayStatusText: 'CASE_READY',
+    displayBadgeLabel: 'Case ready',
+    displayQueueLabel: mlInsights.queue || 'NORMAL',
+    isUnderReview: false
+  }
+}
+
 export function buildSafeDetailState(rawApp: any): SafeApplicationState {
   try {
     if (!rawApp || typeof rawApp !== 'object') {

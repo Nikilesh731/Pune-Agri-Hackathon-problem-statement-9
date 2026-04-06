@@ -651,6 +651,46 @@ class ApplicationsRepository {
   }
 
   /**
+   * Find recent applications by applicant ID for semantic duplicate checking
+   */
+  async findRecentApplicationsByApplicant(applicantId: string, sinceDate: string) {
+    try {
+      console.log(`[REPOSITORY] Finding recent applications for applicant ${applicantId} since ${sinceDate}`)
+      
+      const applications = await prisma.application.findMany({
+        where: {
+          applicantId: applicantId,
+          createdAt: {
+            gte: sinceDate
+          }
+        },
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          createdAt: true,
+          fileName: true,
+          fileType: true,
+          submissionDate: true,
+          extractedData: true,
+          parentApplicationId: true,
+          versionNumber: true,
+          notes: true
+        },
+        orderBy: {
+          createdAt: 'desc'
+        }
+      })
+
+      console.log(`[REPOSITORY] Found ${applications.length} recent applications for applicant ${applicantId}`)
+      return applications
+    } catch (error) {
+      console.error('[ApplicationsRepository] error finding recent applications by applicant:', error)
+      throw new Error(`Failed to find recent applications by applicant: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  /**
    * Find applications by raw file hash for exact duplicate checking
    */
   async findApplicationsByRawFileHash(rawFileHash: string): Promise<Application[]> {

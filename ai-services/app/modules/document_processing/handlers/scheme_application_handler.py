@@ -25,26 +25,31 @@ class SchemeApplicationHandler(BaseHandler):
         ]
         self.optional_fields = [
             'aadhaar_number',
-            'phone_number',
+            'mobile_number',
             'location',
             'village',
+            'taluka',
             'district',
+            'land_details',
             'land_size',
+            'scheme_name',
             'requested_amount'
         ]
         
         self.field_synonyms = {
-            'farmer_name': ['applicant name', 'name of applicant', 'farmer', 'applicant'],
-            'scheme_name': ['scheme', 'scheme name', 'government scheme', 'benefit scheme'],
-            'aadhaar_number': ['aadhaar', 'aadhaar no', 'uid', 'uid number'],
-            'village': ['village', 'village name', 'gram'],
-            'district': ['district', 'district name'],
-            'location': ['address', 'location', 'village address', 'farm location'],
-            'land_size': ['land area', 'area', 'total land', 'land holding', 'acre', 'hectare'],
-            'requested_amount': ['amount', 'requested amount', 'benefit amount', 'subsidy amount', 'loan amount'],
-            'crop_type': ['crop', 'crop name', 'cultivation', 'agricultural crop'],
-            'season': ['season', 'cropping season', 'kharif', 'rabi', 'zaid'],
-            'phone_number': ['phone', 'mobile', 'contact', 'contact number'],
+            'farmer_name': ['applicant name', 'name of applicant', 'farmer', 'applicant', 'name'],
+            'scheme_name': ['scheme', 'scheme name', 'government scheme', 'benefit scheme', 'yojana', 'महाराष्ट्र योजना'],
+            'aadhaar_number': ['aadhaar', 'aadhaar no', 'uid', 'uid number', 'आधार'],
+            'mobile_number': ['mobile', 'phone', 'contact', 'contact number', 'मोबाइल', 'फोन'],
+            'village': ['village', 'village name', 'gram', 'गाव', 'गावठा'],
+            'taluka': ['taluka', 'taluka name', 'tehsil', 'तालुका'],
+            'district': ['district', 'district name', 'जिल्हा'],
+            'location': ['address', 'location', 'village address', 'farm location', 'पत्ता'],
+            'land_details': ['land details', 'land information', 'farm details', 'जमीन तपशील'],
+            'land_size': ['land area', 'area', 'total land', 'land holding', 'acre', 'hectare', 'जमीन क्षेत्र'],
+            'requested_amount': ['amount', 'requested amount', 'benefit amount', 'subsidy amount', 'loan amount', 'रक्कम'],
+            'crop_type': ['crop', 'crop name', 'cultivation', 'agricultural crop', 'पिके'],
+            'season': ['season', 'cropping season', 'kharif', 'rabi', 'zaid', 'हंगाम'],
             'application_id': ['application id', 'application no', 'application number', 'reference no', 'form no']
         }
     
@@ -94,9 +99,11 @@ class SchemeApplicationHandler(BaseHandler):
         # Extract remaining scheme-specific core fields only
         remaining_fields = [
             ('aadhaar_number', self._extract_aadhaar_number),
+            ('mobile_number', self._extract_mobile_number),
+            ('taluka', self._extract_taluka),
+            ('land_details', self._extract_land_details),
             ('land_size', self._extract_land_size),
             ('requested_amount', self._extract_requested_amount),
-            ('phone_number', self._extract_phone_number),
             ('application_id', self._extract_application_id)
         ]
         
@@ -104,7 +111,9 @@ class SchemeApplicationHandler(BaseHandler):
             result = extractor(normalized_text)
             if result:
                 value, confidence, source = result
-                self.safe_set_field(structured_data, extracted_fields, field_name, value, confidence, source)
+                # Apply Maharashtra-specific normalization
+                normalized_value = self._normalize_maharashtra_field(field_name, value)
+                self.safe_set_field(structured_data, extracted_fields, field_name, normalized_value, confidence, source)
         
         # Add structured reasoning in correct order
         if structured_data:
@@ -391,3 +400,118 @@ class SchemeApplicationHandler(BaseHandler):
                     return app_id, 0.85, f"Strong regex pattern: {pattern}"
         
         return None
+    
+    def _extract_mobile_number(self, text: str) -> Optional[Tuple[str, float, str]]:
+        """Extract mobile number with Maharashtra-specific patterns"""
+        extractor = BoundaryAwareExtractor()
+        
+        # Try boundary-aware extraction first
+        labels = ['mobile', 'phone', 'contact number', 'मोबाइल', 'फोन']
+        for label in labels:
+            result = extractor.extract_field_by_boundary(text, 'mobile_number', [label])
+            if result:
+                value = FieldNormalizers.normalize_mobile(result)
+                if FieldValidators.validate_mobile_number(value):
+                    return value, 0.85, f"Boundary-aware extraction with label '{label}'"
+        
+        # Fallback regex for 10-digit numbers with Maharashtra area codes
+        maharashtra_patterns = [
+            r'(?:mobile|phone|contact)[:\s]+([6-9]\d{9})',  # Standard Indian mobile
+            r'(\+91[6-9]\d{9})',  # With country code
+            r'(0?[6-9]\d{9})'  # With optional leading zero
+        ]
+        
+        for pattern in maharashtra_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                phone = match.group(1).replace('+91', '').replace(' ', '')
+                if len(phone) == 10 and FieldValidators.validate_mobile_number(phone):
+                    return phone, 0.65, f"Maharashtra mobile pattern: {pattern}"
+        
+        return None
+    
+    def _extract_taluka(self, text: str) -> Optional[Tuple[str, float, str]]:
+        """Extract taluka (tehsil) information - Maharashtra specific"""
+        extractor = BoundaryAwareExtractor()
+        
+        # Try boundary-aware extraction
+        labels = ['taluka', 'taluka name', 'tehsil', 'तालुका']
+        for label in labels:
+            result = extractor.extract_field_by_boundary(text, 'taluka', [label])
+            if result and len(result.strip()) > 2:
+                taluka = result.strip().title()
+                return taluka, 0.85, f"Boundary-aware extraction with label '{label}'"
+        
+        # Fallback: Look for taluka patterns in text
+        taluka_patterns = [
+            r'taluka\s+([A-Za-z\s]+?)(?:\n|,|district|जिल्हा)',
+            r'tehsil\s+([A-Za-z\s]+?)(?:\n|,|district|जिल्हा)',
+            r'तालुका\s*[:\-]?\s*([A-Za-z\s]+?)(?:\n|,)'
+        ]
+        
+        for pattern in taluka_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                taluka = match.group(1).strip().title()
+                if len(taluka) > 2:
+                    return taluka, 0.65, f"Taluka pattern: {pattern}"
+        
+        return None
+    
+    def _extract_land_details(self, text: str) -> Optional[Tuple[str, float, str]]:
+        """Extract detailed land information - Maharashtra specific"""
+        extractor = BoundaryAwareExtractor()
+        
+        # Try boundary-aware extraction
+        labels = ['land details', 'land information', 'farm details', 'जमीन तपशील']
+        for label in labels:
+            result = extractor.extract_field_by_boundary(text, 'land_details', [label])
+            if result and len(result.strip()) > 10:
+                land_details = result.strip()
+                return land_details, 0.85, f"Boundary-aware extraction with label '{label}'"
+        
+        # Look for land parcel numbers, survey numbers common in Maharashtra
+        survey_patterns = [
+            r'survey\s+no\s*[:\-]?\s*([A-Za-z0-9\-/]+)',
+            r'khasra\s+no\s*[:\-]?\s*([A-Za-z0-9\-/]+)',
+            r'जमीन\s+नंबर\s*[:\-]?\s*([A-Za-z0-9\-/]+)'
+        ]
+        
+        for pattern in survey_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                survey_no = match.group(1).strip()
+                return f"Survey No: {survey_no}", 0.65, f"Land survey pattern: {pattern}"
+        
+        return None
+    
+    def _normalize_maharashtra_field(self, field_name: str, value: str) -> str:
+        """Apply Maharashtra-specific field normalization"""
+        if not value:
+            return value
+            
+        value = str(value).strip()
+        
+        if field_name in ['farmer_name', 'village', 'taluka', 'district']:
+            # Uppercase names for consistency
+            return value.upper()
+        
+        elif field_name == 'aadhaar_number':
+            # Clean Aadhaar number - keep only digits
+            cleaned = re.sub(r'[^\d]', '', value)
+            return cleaned if len(cleaned) == 12 else value
+        
+        elif field_name == 'mobile_number':
+            # Clean mobile number - keep only digits
+            cleaned = re.sub(r'[^\d]', '', value)
+            return cleaned if len(cleaned) == 10 else value
+        
+        elif field_name in ['requested_amount', 'land_size']:
+            # Clean numeric amounts - remove commas, currency symbols
+            cleaned = re.sub(r'[^\d.]', '', value)
+            try:
+                return str(float(cleaned))
+            except ValueError:
+                return value
+        
+        return value

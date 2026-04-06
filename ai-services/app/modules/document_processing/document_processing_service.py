@@ -1240,7 +1240,7 @@ class DocumentProcessingService:
         
         # Define required fields per document type
         required_fields_map = {
-            'scheme_application': ['farmer_name', 'scheme_name', 'application_id'],
+            'scheme_application': ['farmer_name', 'scheme_name'],  # REMOVED application_id - not reliably present
             'farmer_record': ['farmer_name', 'aadhaar_number', 'mobile_number'],
             'grievance': ['farmer_name', 'grievance_type', 'description'],
             'insurance_claim': ['farmer_name', 'claim_type', 'loss_description'],
@@ -1550,10 +1550,10 @@ class DocumentProcessingService:
             
         except ImportError:
             logger.error("[EXTRACT] python-docx not installed, cannot extract from DOCX")
-            return ""
+            raise ValueError("DOCX extraction not available - python-docx library not installed")
         except Exception as e:
             logger.error(f"[EXTRACT] DOCX extraction failed: {e}")
-            return ""
+            raise ValueError(f"DOCX extraction failed: {str(e)}")
     
     def _extract_text_from_image(self, file_content: bytes) -> str:
         """Extract text from image bytes using OCR"""
@@ -1616,9 +1616,46 @@ class DocumentProcessingService:
                 image = image.convert('RGB')
                 logger.debug("[DOC OCR] Converted image to RGB mode")
             
-            # Perform OCR with optimized settings for better accuracy
-            custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.,/-:()&@%₹$ "'
-            extracted_text = pytesseract.image_to_string(image, config=custom_config)
+            # Apply basic preprocessing for better OCR accuracy
+            import PIL.ImageEnhance
+            import PIL.ImageFilter
+            
+            # Increase contrast
+            enhancer = PIL.ImageEnhance.Contrast(image)
+            image = enhancer.enhance(2.0)
+            
+            # Convert to grayscale for better OCR
+            gray_image = image.convert('L')
+            
+            # Apply threshold for better text extraction
+            from PIL import Image
+            import numpy as np
+            try:
+                # Try to use numpy for better thresholding
+                img_array = np.array(gray_image)
+                # Simple thresholding
+                threshold = 128
+                img_array = np.where(img_array > threshold, 255, 0).astype(np.uint8)
+                processed_image = Image.fromarray(img_array, mode='L')
+                logger.debug("[DOC OCR] Applied numpy threshold preprocessing")
+            except ImportError:
+                # Fallback: use PIL's built-in point operation
+                processed_image = gray_image.point(lambda x: 0 if x < 128 else 255, mode='1')
+                logger.debug("[DOC OCR] Applied PIL threshold preprocessing")
+            
+            # Perform OCR with multi-language support (English, Hindi, Marathi)
+            # Language configuration: eng+hin+mar for Maharashtra government documents
+            lang_config = "eng+hin+mar"
+            custom_config = f'--oem 3 --psm 6 -l {lang_config}'
+            
+            try:
+                extracted_text = pytesseract.image_to_string(processed_image, config=custom_config)
+                logger.info(f"[DOC OCR] Multi-language OCR completed with languages: {lang_config}")
+            except Exception as lang_error:
+                logger.warning(f"[DOC OCR] Multi-language OCR failed, falling back to English only: {lang_error}")
+                # Fallback to English only
+                fallback_config = '--oem 3 --psm 6 -l eng'
+                extracted_text = pytesseract.image_to_string(processed_image, config=fallback_config)
             
             # PART 8: Enhanced handwritten/low OCR safety
             text_length = len(extracted_text.strip())

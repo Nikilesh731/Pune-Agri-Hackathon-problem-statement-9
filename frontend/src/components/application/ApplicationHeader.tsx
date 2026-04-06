@@ -3,7 +3,7 @@
  * Purpose: Displays application header with navigation and status
  */
 import { Link } from 'react-router-dom'
-import { MappedApplication } from '../../utils/applicationDetailMapper'
+import { MappedApplication, resolveDisplayWorkflowState } from '../../utils/applicationDetailMapper'
 import { PageHeader } from '../ui/PageHeader'
 import { StatusBadge } from '../ui/StatusBadge'
 import { getDocumentTypeLabel } from '../../utils/applicationDetailMapper'
@@ -29,21 +29,19 @@ export function ApplicationHeader({
   }
 
   const documentType = getDocumentType(application)
-
-  // Get workflow information
-  const getWorkflowInfo = (app: MappedApplication) => {
+  const workflow = resolveDisplayWorkflowState(application)
+  
+  // Get additional workflow info for priority/risk (not status)
+  const getAdditionalInfo = (app: MappedApplication) => {
     const normalized = (app as any).normalizedData || {}
     const mlInsights = normalized.mlInsights || normalized.ml_insights || {}
-
     return {
-      status: (normalized.aiProcessingStatus || app.aiProcessingStatus || 'pending').toString(),
       priority: mlInsights.queue || 'NORMAL',
       riskLevel: mlInsights.risk_level || normalized.riskLevel || 'Medium',
-      estimatedTime: mlInsights.processing_time || '2 days'
     }
   }
-
-  const workflow = getWorkflowInfo(application)
+  
+  const additionalInfo = getAdditionalInfo(application)
 
   // Get status icon
   const getStatusIcon = (status: string) => {
@@ -100,7 +98,7 @@ export function ApplicationHeader({
   return (
     <PageHeader 
       title={`${getDocumentTypeLabel(documentType)} - ${applicantName}`}
-      subtitle={`${application.caseId || `CASE-${String(application.id).slice(0,8)}`} | ${(application.aiProcessingStatus?.toString().toLowerCase() === 'completed' || application.status?.toString().toLowerCase() === 'processed' || application.status?.toString().toLowerCase() === 'approved') ? 'CASE_READY' : 'UNDER_REVIEW'}`}
+      subtitle={`${application.caseId || `CASE-${String(application.id).slice(0,8)}`} | ${workflow.displayBadgeLabel}`}
     >
       <div className="flex items-center justify-between">
         {showBackLink && (
@@ -113,25 +111,25 @@ export function ApplicationHeader({
         )}
         
         <div className="flex items-center space-x-4">
-          {/* Application Status */}
-          <StatusBadge status={application.status} />
+          {/* Application Status - using unified workflow state */}
+          <StatusBadge status={workflow.displayStatusText.toLowerCase()} />
           
-          {/* Workflow Status */}
+          {/* Workflow Status - using unified workflow state */}
           <div className="flex items-center space-x-2 px-3 py-1 bg-gray-100 rounded-full border border-gray-200">
-            {getStatusIcon(workflow.status)}
+            {getStatusIcon(workflow.displayStatusText.toLowerCase())}
             <span className="text-sm font-medium text-gray-700">
-              {workflow.status.replace(/_/g, ' ').toUpperCase()}
+              {workflow.displayBadgeLabel}
             </span>
           </div>
           
           {/* Priority */}
-          <div className={`px-3 py-1 rounded-full border text-sm font-medium ${getPriorityColor(workflow.priority)}`}>
-            Priority: {workflow.priority.replace(/_/g, ' ').toUpperCase()}
+          <div className={`px-3 py-1 rounded-full border text-sm font-medium ${getPriorityColor(additionalInfo.priority)}`}>
+            Priority: {additionalInfo.priority.replace(/_/g, ' ').toUpperCase()}
           </div>
           
           {/* Risk Level */}
-          <div className={`px-3 py-1 rounded-full border text-sm font-medium ${getRiskColor(workflow.riskLevel)}`}>
-            Risk: {workflow.riskLevel.toUpperCase()}
+          <div className={`px-3 py-1 rounded-full border text-sm font-medium ${getRiskColor(additionalInfo.riskLevel)}`}>
+            Risk: {additionalInfo.riskLevel.toUpperCase()}
           </div>
           
           {/* Document Type */}
