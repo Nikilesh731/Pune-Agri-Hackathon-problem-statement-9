@@ -26,7 +26,6 @@ from app.modules.ai_assist.llm_refinement_service import add_llm_refinement_to_r
 from app.modules.intelligence.intelligence_service import IntelligenceService
 from app.modules.document_processing.ml_priority import predict_application_priority
 from app.modules.document_processing.workflow_service import WorkflowService
-from app.modules.document_processing.docling_ingestion_service import DoclingIngestionService
 from app.modules.document_processing.granite_extraction_service import GraniteExtractionService
 from app.ml.ml_service import analyze_document_risk
 
@@ -60,20 +59,6 @@ class DocumentProcessingService:
         self._ocr_service = None
         self.paddle_ocr_service = None
         self.logger = logging.getLogger(__name__)
-
-        # Initialize Docling ingestion service with graceful degradation
-        self.use_docling = os.getenv("USE_DOCLING", "true").lower() == "true"
-        try:
-            if self.use_docling:
-                self.docling_service = DoclingIngestionService()
-                logger.info("[INIT] Docling ingestion service initialized successfully")
-            else:
-                logger.warning("[INIT] USE_DOCLING=false - Docling service disabled")
-                self.docling_service = None
-        except Exception as e:
-            logger.warning(f"[INIT] Docling service initialization failed: {e}")
-            logger.warning("[INIT] Will fall back to traditional text extraction")
-            self.docling_service = None
 
         # Initialize Granite extraction service with graceful degradation
         try:
@@ -377,30 +362,16 @@ class DocumentProcessingService:
     
     def _should_use_docling_granite(self, filename: str) -> bool:
         """
-        Determine if Docling+Granite pipeline should be used for this file
+        Determine if enhanced pipeline should be used for this file
         
         Args:
             filename: Original filename
             
         Returns:
-            True if Docling+Granite should be used
+            False - using PyMuPDF/OCR pipeline instead
         """
-        # Check production safety flags
-        if not self.use_docling or not self.use_granite:
-            return False
-        
-        # Check if services are available
-        if not self.docling_service or not self.granite_service:
-            return False
-        
-        # Check file type
-        file_extension = filename.lower().split('.')[-1] if '.' in filename.lower() else ''
-        
-        # Use Docling+Granite for PDF, DOCX, and images when available
-        # TXT files can use traditional path for now (as per requirements)
-        supported_types = ['pdf', 'docx', 'jpg', 'jpeg', 'png', 'tiff', 'bmp']
-        
-        return file_extension in supported_types
+        # Disabled - using PyMuPDF/OCR pipeline exclusively
+        return False
     
     def _create_processing_failure_payload(self, filename: str, error_message: str, failure_type: str = "PROCESSING_FAILURE") -> Dict[str, Any]:
         """

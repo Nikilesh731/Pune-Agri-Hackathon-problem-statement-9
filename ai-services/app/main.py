@@ -87,7 +87,6 @@ async def health_check():
         "status": "ok",
         "service": "AI Smart Agriculture Services",
         "version": "1.0.0",
-        "docling": bool(runtime_health.get("docling_available", False)),
         "ocr": bool(runtime_health.get("ocr_available", False)),
         "granite": bool(runtime_health.get("granite_available", False)),
     }

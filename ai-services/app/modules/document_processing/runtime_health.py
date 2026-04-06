@@ -73,16 +73,6 @@ class RuntimeHealthChecker:
         self.health_status: Dict[str, Any] = {}
         self.missing_critical = []
 
-    def _check_docling_available(self) -> bool:
-        try:
-            import docling  # noqa: F401
-            from docling.document_converter import DocumentConverter  # noqa: F401
-            from docling.datamodel.base_models import InputFormat  # noqa: F401
-            from docling.datamodel.pipeline_options import PdfPipelineOptions  # noqa: F401
-            return True
-        except Exception:
-            return False
-
     def _check_granite_available(self) -> bool:
         granite_endpoint = os.getenv("GRANITE_ENDPOINT", "").strip()
         use_granite = os.getenv("USE_GRANITE", "true").lower() == "true"
@@ -94,8 +84,6 @@ class RuntimeHealthChecker:
     def check_python_dependencies(self) -> Dict[str, bool]:
         """Check if Python packages are importable."""
         checks: Dict[str, bool] = {}
-
-        checks["docling"] = self._check_docling_available()
 
         try:
             import pytesseract  # noqa: F401
@@ -170,13 +158,12 @@ class RuntimeHealthChecker:
         system_binaries = self.check_system_binaries()
         environment = self.check_runtime_environment()
 
-        docling_available = bool(python_dependencies.get("docling", False))
         ocr_available = bool(python_dependencies.get("pytesseract", False) and system_binaries.get("tesseract_binary", False))
         granite_available = self._check_granite_available()
 
-        if docling_available and ocr_available and granite_available:
+        if ocr_available and granite_available:
             overall_status = "healthy"
-        elif not docling_available and not ocr_available:
+        elif not ocr_available:
             overall_status = "failed"
         else:
             overall_status = "degraded"
@@ -185,14 +172,12 @@ class RuntimeHealthChecker:
             "python_dependencies": python_dependencies,
             "system_binaries": system_binaries,
             "environment": environment,
-            "docling_available": docling_available,
             "ocr_available": ocr_available,
             "granite_available": granite_available,
             "overall_status": overall_status,
             "missing_critical": self.missing_critical,
         }
 
-        logger.info(f"[HEALTH] Docling: {'available' if docling_available else 'unavailable'}")
         logger.info(f"[HEALTH] OCR: {'available' if ocr_available else 'unavailable'}")
         logger.info(f"[HEALTH] Granite: {'available' if granite_available else 'disabled'}")
         logger.info(f"[HEALTH] Status: {overall_status}")

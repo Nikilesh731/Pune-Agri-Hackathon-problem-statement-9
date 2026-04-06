@@ -1,6 +1,6 @@
 """
-Granite-Docling Service
-Purpose: Clean unified document ingestion using Docling/Granite-Docling with OCR fallback
+Document Ingestion Service
+Purpose: Document parsing using PyMuPDF + OCR with stable dependency stack
 """
 import logging
 import os
@@ -11,14 +11,6 @@ import re
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 import uuid
-
-try:
-    from docling.document_converter import DocumentConverter
-    from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import PdfPipelineOptions
-    DOCLING_AVAILABLE = True
-except ImportError:
-    DOCLING_AVAILABLE = False
 
 try:
     import pytesseract
@@ -32,10 +24,11 @@ except ImportError:
 
 class GraniteDoclingService:
     """
-    Unified document ingestion service using Docling/Granite-Docling with OCR fallback
+    Document ingestion service using PyMuPDF + OCR
     
     This service provides:
-    - Docling-first document parsing
+    - PyMuPDF-based document parsing
+    - Tesseract OCR for images and scanned PDFs
     - OCR fallback when needed
     - Clean JSON response format
     - Production-safe error handling
@@ -43,46 +36,12 @@ class GraniteDoclingService:
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self._docling_converter = None
         self._ocr_available = None
         self._ocr_languages_available = []
         self._tesseract_path = None
         
-        # Initialize Docling if available
-        if DOCLING_AVAILABLE:
-            self._init_docling()
-        
         # Check OCR availability
         self._check_ocr_availability()
-    
-    def _init_docling(self):
-        """Initialize Docling converter with production-safe settings"""
-        try:
-            # Configure pipeline options
-            pipeline_options = PdfPipelineOptions()
-            pipeline_options.do_ocr = True
-            pipeline_options.do_table_structure = True
-            pipeline_options.images_scale = 2.0
-            
-            # Create converter with a safe fallback if the installed Docling
-            # version does not support the expected configuration shape.
-            try:
-                self._docling_converter = DocumentConverter(
-                    format_config={
-                        InputFormat.PDF: pipeline_options,
-                        InputFormat.DOCX: {},
-                        InputFormat.IMAGE: pipeline_options,
-                        InputFormat.TXT: {},
-                    }
-                )
-            except TypeError:
-                self.logger.warning("[DOCLING] format_config unsupported, using default converter")
-                self._docling_converter = DocumentConverter()
-            self.logger.info("[DOCLING] Docling converter initialized")
-            
-        except Exception as e:
-            self.logger.error(f"[DOCLING] Failed to initialize: {e}")
-            self._docling_converter = None
     
     def _check_ocr_availability(self):
         """Check if OCR (Tesseract) is available"""
@@ -134,6 +93,21 @@ class GraniteDoclingService:
 
         return None
 
+    def _detect_file_type(self, filename: str) -> str:
+        """Detect file type from filename"""
+        if not filename:
+            return "unknown"
+        extension = Path(filename).suffix.lower()
+        type_mapping = {
+            '.pdf': 'pdf',
+            '.jpg': 'image',
+            '.jpeg': 'image',
+            '.png': 'image',
+            '.tiff': 'image',
+            '.bmp': 'image',
+        }
+        return type_mapping.get(extension, 'unknown')
+
     def _detect_source_type(self, filename: str) -> str:
         return self._detect_file_type(filename)
 
@@ -159,114 +133,7 @@ class GraniteDoclingService:
         if isinstance(value, list):
             parts = [self._flatten_text(item) for item in value]
             return " ".join(part for part in parts if part).strip()
-        if hasattr(value, "text") and getattr(value, "text"):
-            return self._flatten_text(getattr(value, "text"))
-        if hasattr(value, "content") and getattr(value, "content"):
-            return self._flatten_text(getattr(value, "content"))
         return str(value)
-
-    def _get_docling_text(self, docling_result: Any) -> str:
-        if hasattr(docling_result, "text") and docling_result.text:
-            return self._flatten_text(docling_result.text).strip()
-        if hasattr(docling_result, "document") and hasattr(docling_result.document, "text") and docling_result.document.text:
-            return self._flatten_text(docling_result.document.text).strip()
-        if hasattr(docling_result, "document") and hasattr(docling_result.document, "export_to_markdown"):
-            try:
-                exported = docling_result.document.export_to_markdown()
-                return self._flatten_text(exported).strip()
-            except Exception:
-                pass
-        return ""
-
-    def _extract_pages(self, docling_result: Any) -> List[Dict[str, Any]]:
-        pages: List[Dict[str, Any]] = []
-        document = getattr(docling_result, "document", None)
-        if not document or not hasattr(document, "pages"):
-            return pages
-
-        for index, page in enumerate(getattr(document, "pages", []) or []):
-            page_number = getattr(page, "page_number", None) or getattr(page, "page_no", None) or index + 1
-            page_text = self._flatten_text(getattr(page, "text", "")).strip()
-            pages.append(
-                {
-                    "page_number": page_number,
-                    "text": page_text,
-                    "size": getattr(page, "size", None),
-                }
-            )
-        return pages
-
-    def _extract_blocks(self, docling_result: Any) -> List[Dict[str, Any]]:
-        blocks: List[Dict[str, Any]] = []
-        document = getattr(docling_result, "document", None)
-        candidates = []
-
-        if document is not None:
-            for attr_name in ("body", "blocks", "elements"):
-                if hasattr(document, attr_name):
-                    candidates = list(getattr(document, attr_name) or [])
-                    if candidates:
-                        break
-
-        if not candidates and hasattr(docling_result, "blocks"):
-            candidates = list(getattr(docling_result, "blocks") or [])
-
-        for index, block in enumerate(candidates):
-            text = self._flatten_text(getattr(block, "text", block)).strip()
-            if not text:
-                continue
-            blocks.append(
-                {
-                    "block_number": index + 1,
-                    "type": getattr(block, "type", None) or getattr(block, "label", None) or "text",
-                    "text": text,
-                    "confidence": getattr(block, "confidence", None),
-                    "page_number": getattr(block, "page_number", None) or getattr(block, "page_no", None),
-                }
-            )
-        return blocks
-
-    def _extract_tables(self, docling_result: Any) -> List[Dict[str, Any]]:
-        tables: List[Dict[str, Any]] = []
-        document = getattr(docling_result, "document", None)
-        table_candidates = []
-
-        if document is not None and hasattr(document, "tables"):
-            table_candidates = list(getattr(document, "tables") or [])
-        elif hasattr(docling_result, "tables"):
-            table_candidates = list(getattr(docling_result, "tables") or [])
-
-        for index, table in enumerate(table_candidates):
-            rows: List[List[str]] = []
-            if hasattr(table, "grid") and hasattr(table.grid, "rows"):
-                for row in getattr(table.grid, "rows", []) or []:
-                    row_values = []
-                    for cell in getattr(row, "cells", []) or []:
-                        row_values.append(self._flatten_text(getattr(cell, "text", cell)).strip())
-                    if row_values:
-                        rows.append(row_values)
-            elif isinstance(table, list):
-                rows = [[self._flatten_text(cell).strip() for cell in row] for row in table]
-            tables.append(
-                {
-                    "table_number": index + 1,
-                    "rows": rows,
-                    "confidence": getattr(table, "confidence", None),
-                }
-            )
-        return tables
-
-    def _build_metadata(self, file_type: str, raw_text: str, pages: List[Dict[str, Any]], blocks: List[Dict[str, Any]], tables: List[Dict[str, Any]], parser: str) -> Dict[str, Any]:
-        return {
-            "file_type": file_type,
-            "processing_method": parser,
-            "text_length": len(raw_text),
-            "page_count": len(pages),
-            "has_tables": len(tables) > 0,
-            "has_blocks": len(blocks) > 0,
-            "warnings": [],
-            "ocr_languages_available": self._ocr_languages_available,
-        }
 
     def _quality_issues(self, raw_text: str) -> List[str]:
         issues: List[str] = []
@@ -335,110 +202,104 @@ class GraniteDoclingService:
 
         return merged_items
 
-    def _merge_docling_ocr_result(self, docling_result: Dict[str, Any], ocr_result: Dict[str, Any]) -> Dict[str, Any]:
-        merged_result = dict(docling_result)
-        merged_result["raw_text"] = self._merge_text_content(docling_result.get("raw_text", ""), ocr_result.get("raw_text", ""))
-        merged_result["pages"] = self._merge_structured_items(docling_result.get("pages", []), ocr_result.get("pages", []))
-        merged_result["blocks"] = self._merge_structured_items(docling_result.get("blocks", []), ocr_result.get("blocks", []))
-        if not merged_result.get("tables") and ocr_result.get("tables"):
-            merged_result["tables"] = ocr_result.get("tables", [])
-
-        metadata = dict(merged_result.get("metadata", {}))
-        metadata["ocr_fallback_used"] = True
-        metadata["ocr_text_length"] = len(ocr_result.get("raw_text", ""))
-        warnings = list(metadata.get("warnings", []))
-        if "ocr_fallback_used" not in warnings:
-            warnings.append("ocr_fallback_used")
-        metadata["warnings"] = warnings
-        merged_result["metadata"] = metadata
-
-        return merged_result
-
-    def _build_ocr_failure_response(
-        self,
-        file_type: str,
-        errors: List[str],
-        warnings: List[str],
-        docling_result: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        base_result = docling_result or {
-            "raw_text": "",
-            "pages": [],
-            "blocks": [],
-            "tables": [],
-            "metadata": {},
-        }
-
-        response = {
-            "success": bool(docling_result),
-            "source_type": file_type,
-            "parser": "docling" if docling_result else "none",
-            "raw_text": base_result.get("raw_text", ""),
-            "pages": base_result.get("pages", []),
-            "blocks": base_result.get("blocks", []),
-            "tables": base_result.get("tables", []),
-            "metadata": dict(base_result.get("metadata", {})),
-            "ocr_used": True,
-            "fallback_used": True,
-            "errors": errors,
-            "risk_flags": [
-                {
-                    "code": "OCR_FAILURE",
-                    "severity": "high",
-                    "message": "OCR fallback failed after low-quality Docling extraction",
-                }
-            ],
-            "decision_support": {
-                "decision": "manual_review_required",
-                "confidence": 0.0,
-                "reasoning": ["OCR fallback failed after low-quality Docling extraction"],
-            },
-        }
-
-        response_metadata = response["metadata"]
-        response_metadata["warnings"] = warnings
-        response_metadata["ocr_fallback_failed"] = True
-        response_metadata["ocr_used"] = True
-        response_metadata["fallback_used"] = True
-        response["metadata"] = response_metadata
-
-        return response
-
-    def _normalize_docling_result(self, docling_result: Any, file_type: str) -> Dict[str, Any]:
-        raw_text = self._get_docling_text(docling_result)
-        pages = self._extract_pages(docling_result)
-        blocks = self._extract_blocks(docling_result)
-        tables = self._extract_tables(docling_result)
-
-        if not raw_text and pages:
-            raw_text = "\n".join(page.get("text", "") for page in pages if page.get("text"))
-        if not raw_text and blocks:
-            raw_text = "\n".join(block.get("text", "") for block in blocks if block.get("text"))
-
-        metadata = self._build_metadata(file_type, raw_text, pages, blocks, tables, "docling")
-
-        document = getattr(docling_result, "document", None)
-        if document is not None and hasattr(document, "meta"):
-            doc_meta = getattr(document, "meta")
-            for key in ("creation_date", "author", "title", "language", "text_quality"):
-                value = getattr(doc_meta, key, None)
-                if value:
-                    metadata[key] = value
-
-        if document is not None:
-            metadata["docling_document"] = {
-                "page_count": getattr(document, "page_count", len(pages)),
-                "language": getattr(document, "language", "unknown"),
-                "text_quality": getattr(document, "text_quality", "unknown"),
-            }
-
+    def _build_metadata(self, file_type: str, raw_text: str, pages: List[Dict[str, Any]], blocks: List[Dict[str, Any]], tables: List[Dict[str, Any]], parser: str) -> Dict[str, Any]:
         return {
-            "raw_text": raw_text.strip(),
-            "pages": pages,
-            "blocks": blocks,
-            "tables": tables,
-            "metadata": metadata,
+            "file_type": file_type,
+            "processing_method": parser,
+            "text_length": len(raw_text),
+            "page_count": len(pages),
+            "has_tables": len(tables) > 0,
+            "has_blocks": len(blocks) > 0,
+            "warnings": [],
+            "ocr_languages_available": self._ocr_languages_available,
         }
+
+    def _create_temp_file(self, file_data: bytes, filename: str) -> str:
+        """Create temporary file for processing"""
+        temp_dir = tempfile.gettempdir()
+        temp_filename = f"granite_docling_{uuid.uuid4().hex}_{filename}"
+        temp_path = os.path.join(temp_dir, temp_filename)
+        
+        try:
+            with open(temp_path, 'wb') as f:
+                f.write(file_data)
+            return temp_path
+        except Exception as e:
+            self.logger.error(f"[TEMP] Failed to create temp file: {e}")
+            raise ValueError(f"Failed to create temporary file: {e}")
+    
+    def _cleanup_temp_file(self, temp_path: str):
+        """Clean up temporary file"""
+        try:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+        except Exception as e:
+            self.logger.warning(f"[TEMP] Failed to cleanup temp file {temp_path}: {e}")
+
+    def _extract_with_pymupdf(self, file_path: str, file_type: str) -> Dict[str, Any]:
+        """Extract text from PDF using PyMuPDF"""
+        try:
+            import fitz
+        except ImportError:
+            raise ValueError("PyMuPDF not available")
+        
+        try:
+            self.logger.info(f"[PYMUPDF] Processing {file_type} file")
+            doc = fitz.open(file_path)
+            pages: List[Dict[str, Any]] = []
+            blocks: List[Dict[str, Any]] = []
+            raw_parts: List[str] = []
+            
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                page_text = page.get_text()
+                if page_text and page_text.strip():
+                    raw_parts.append(page_text.strip())
+                    pages.append({
+                        "page_number": page_num + 1,
+                        "text": page_text.strip(),
+                    })
+                    blocks.append({
+                        "block_number": page_num + 1,
+                        "type": "text",
+                        "text": page_text.strip(),
+                        "page_number": page_num + 1
+                    })
+            
+            doc.close()
+            raw_text = "\n".join(raw_parts).strip()
+            
+            return {
+                "raw_text": raw_text,
+                "pages": pages,
+                "blocks": blocks,
+                "tables": [],
+                "metadata": self._build_metadata(file_type, raw_text, pages, blocks, [], "pymupdf"),
+            }
+            
+        except Exception as e:
+            self.logger.error(f"[PYMUPDF] Extraction failed: {e}")
+            raise ValueError(f"PyMuPDF extraction failed: {e}")
+    
+    def _extract_with_ocr(self, file_path: str, file_type: str) -> Dict[str, Any]:
+        """Extract text using OCR fallback"""
+        if not self._ocr_available:
+            raise ValueError("OCR not available")
+        
+        try:
+            self.logger.info(f"[OCR] Processing {file_type} file")
+            if file_type == 'image':
+                image = Image.open(file_path)
+                return self._ocr_image(image, os.path.basename(file_path))
+
+            if file_type == 'pdf':
+                return self._ocr_pdf(file_path, os.path.basename(file_path))
+
+            raise ValueError(f"OCR fallback is not supported for file type: {file_type}")
+            
+        except Exception as e:
+            self.logger.error(f"[OCR] Extraction failed: {e}")
+            raise ValueError(f"OCR extraction failed: {e}")
 
     def _get_available_ocr_languages(self) -> List[str]:
         if not self._ocr_available:
@@ -580,79 +441,74 @@ class GraniteDoclingService:
             "metadata": metadata,
         }
     
-    def _detect_file_type(self, filename: str) -> str:
-        """Detect file type from filename"""
-        file_extension = Path(filename).suffix.lower()
-        
-        type_mapping = {
-            '.pdf': 'pdf',
-            '.docx': 'docx',
-            '.doc': 'doc',
-            '.jpg': 'image',
-            '.jpeg': 'image',
-            '.png': 'image',
-            '.tiff': 'image',
-            '.bmp': 'image',
-            '.txt': 'txt',
+    def _build_ocr_failure_response(
+        self,
+        file_type: str,
+        errors: List[str],
+        warnings: List[str],
+        pymupdf_result: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        base_result = pymupdf_result or {
+            "raw_text": "",
+            "pages": [],
+            "blocks": [],
+            "tables": [],
+            "metadata": {},
         }
-        
-        return type_mapping.get(file_extension, 'unknown')
-    
-    def _create_temp_file(self, file_data: bytes, filename: str) -> str:
-        """Create temporary file for processing"""
-        temp_dir = tempfile.gettempdir()
-        temp_filename = f"granite_docling_{uuid.uuid4().hex}_{filename}"
-        temp_path = os.path.join(temp_dir, temp_filename)
-        
-        try:
-            with open(temp_path, 'wb') as f:
-                f.write(file_data)
-            return temp_path
-        except Exception as e:
-            self.logger.error(f"[TEMP] Failed to create temp file: {e}")
-            raise ValueError(f"Failed to create temporary file: {e}")
-    
-    def _cleanup_temp_file(self, temp_path: str):
-        """Clean up temporary file"""
-        try:
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-        except Exception as e:
-            self.logger.warning(f"[TEMP] Failed to cleanup temp file {temp_path}: {e}")
-    
-    def _extract_with_docling(self, file_path: str, file_type: str) -> Dict[str, Any]:
-        """Extract document information using Docling"""
-        if not self._docling_converter:
-            raise ValueError("Docling converter not available")
-        
-        try:
-            self.logger.info(f"[DOCLING] Processing {file_type} file")
-            result = self._docling_converter.convert(file_path)
-            return self._normalize_docling_result(result, file_type)
-            
-        except Exception as e:
-            self.logger.error(f"[DOCLING] Extraction failed: {e}")
-            raise ValueError(f"Docling extraction failed: {e}")
-    
-    def _extract_with_ocr(self, file_path: str, file_type: str) -> Dict[str, Any]:
-        """Extract text using OCR fallback"""
-        if not self._ocr_available:
-            raise ValueError("OCR not available")
-        
-        try:
-            self.logger.info(f"[OCR] Processing {file_type} file")
-            if file_type == 'image':
-                image = Image.open(file_path)
-                return self._ocr_image(image, os.path.basename(file_path))
 
-            if file_type == 'pdf':
-                return self._ocr_pdf(file_path, os.path.basename(file_path))
+        response = {
+            "success": bool(pymupdf_result),
+            "source_type": file_type,
+            "parser": "pymupdf" if pymupdf_result else "none",
+            "raw_text": base_result.get("raw_text", ""),
+            "pages": base_result.get("pages", []),
+            "blocks": base_result.get("blocks", []),
+            "tables": base_result.get("tables", []),
+            "metadata": dict(base_result.get("metadata", {})),
+            "ocr_used": True,
+            "fallback_used": True,
+            "errors": errors,
+            "risk_flags": [
+                {
+                    "code": "OCR_FAILURE",
+                    "severity": "high",
+                    "message": "OCR fallback failed after low-quality initial extraction",
+                }
+            ],
+            "decision_support": {
+                "decision": "manual_review_required",
+                "confidence": 0.0,
+                "reasoning": ["OCR fallback failed after low-quality initial extraction"],
+            },
+        }
 
-            raise ValueError(f"OCR fallback is not supported for file type: {file_type}")
-            
-        except Exception as e:
-            self.logger.error(f"[OCR] Extraction failed: {e}")
-            raise ValueError(f"OCR extraction failed: {e}")
+        response_metadata = response["metadata"]
+        response_metadata["warnings"] = warnings
+        response_metadata["ocr_fallback_failed"] = True
+        response_metadata["ocr_used"] = True
+        response_metadata["fallback_used"] = True
+        response["metadata"] = response_metadata
+
+        return response
+
+    def _merge_extraction_results(self, primary_result: Dict[str, Any], secondary_result: Dict[str, Any]) -> Dict[str, Any]:
+        merged_result = dict(primary_result)
+        merged_result["raw_text"] = self._merge_text_content(primary_result.get("raw_text", ""), secondary_result.get("raw_text", ""))
+        merged_result["pages"] = self._merge_structured_items(primary_result.get("pages", []), secondary_result.get("pages", []))
+        merged_result["blocks"] = self._merge_structured_items(primary_result.get("blocks", []), secondary_result.get("blocks", []))
+        if not merged_result.get("tables") and secondary_result.get("tables"):
+            merged_result["tables"] = secondary_result.get("tables", [])
+
+        metadata = dict(merged_result.get("metadata", {}))
+        metadata["ocr_fallback_used"] = True
+        metadata["ocr_text_length"] = len(secondary_result.get("raw_text", ""))
+        warnings = list(metadata.get("warnings", []))
+        if "ocr_fallback_used" not in warnings:
+            warnings.append("ocr_fallback_used")
+        metadata["warnings"] = warnings
+        merged_result["metadata"] = metadata
+
+        return merged_result
     
     def _check_text_quality(self, text: str) -> bool:
         """Check if extracted text quality is sufficient"""
@@ -665,7 +521,7 @@ class GraniteDoclingService:
         if len(text) < 20:
             return False
         
-        # Check if text contains meaningful content (not just symbols/numbers)
+        # Check if text contains meaningful content
         alpha_chars = sum(1 for c in text if c.isalpha())
         if alpha_chars < 5:
             return False
@@ -674,22 +530,11 @@ class GraniteDoclingService:
         if symbol_chars > max(10, int(len(text) * 0.4)):
             return False
         
-        # Check for common OCR noise patterns
-        noise_patterns = [
-            r'^[\d\s\W]*$',  # Only numbers, spaces, and special chars
-            r'^[^\w\s]*$',   # Only special characters
-            r'^\s*$',        # Only whitespace
-        ]
-        
-        for pattern in noise_patterns:
-            if re.match(pattern, text):
-                return False
-        
         return True
     
     def parse_document(self, file_path: str) -> Dict[str, Any]:
         """
-        Parse document using Docling first, OCR fallback if needed
+        Parse document using PyMuPDF first, OCR fallback if needed
         
         Args:
             file_path: Local file path to the document
@@ -719,47 +564,72 @@ class GraniteDoclingService:
         warnings: List[str] = []
         ocr_used = False
         fallback_used = False
-        docling_result: Optional[Dict[str, Any]] = None
-        docling_quality_poor = False
+        primary_result: Optional[Dict[str, Any]] = None
+        primary_quality_poor = False
         
-        # Try Docling first
-        if self._docling_converter:
+        # Try PyMuPDF first for PDFs, direct image loading for images
+        if file_type == 'pdf':
             try:
-                self.logger.info(f"[PARSER] Starting Docling parsing for {filename}")
-                docling_result = self._extract_with_docling(file_path, file_type)
-                docling_quality_poor = self._is_text_quality_poor(docling_result.get('raw_text', ''))
+                self.logger.info(f"[PARSER] Starting PyMuPDF parsing for {filename}")
+                primary_result = self._extract_with_pymupdf(file_path, file_type)
+                primary_quality_poor = self._is_text_quality_poor(primary_result.get('raw_text', ''))
 
                 # Check text quality
-                if not docling_quality_poor:
-                    self.logger.info(f"[PARSER] Docling parsing successful for {filename}")
-                    metadata = docling_result.get("metadata", {})
+                if not primary_quality_poor:
+                    self.logger.info(f"[PARSER] PyMuPDF parsing successful for {filename}")
+                    metadata = primary_result.get("metadata", {})
                     metadata.setdefault("warnings", warnings)
                     return {
                         "success": True,
                         "source_type": file_type,
-                        "parser": "docling",
-                        "raw_text": docling_result['raw_text'],
-                        "pages": docling_result['pages'],
-                        "blocks": docling_result['blocks'],
-                        "tables": docling_result['tables'],
+                        "parser": "pymupdf",
+                        "raw_text": primary_result['raw_text'],
+                        "pages": primary_result['pages'],
+                        "blocks": primary_result['blocks'],
+                        "tables": primary_result['tables'],
                         "metadata": metadata,
                         "ocr_used": False,
                         "fallback_used": False,
                         "errors": []
                     }
                 else:
-                    self.logger.warning(f"[PARSER] Docling low quality for {filename}")
-                    warnings.append("Docling extraction quality poor")
-                    errors.append("Docling extraction quality poor")
+                    self.logger.warning(f"[PARSER] PyMuPDF low quality for {filename}")
+                    warnings.append("PyMuPDF extraction quality poor")
+                    errors.append("PyMuPDF extraction quality poor")
                     
             except Exception as e:
-                self.logger.error(f"[PARSER] Docling failed for {filename}: {e}")
-                errors.append(f"Docling failed: {str(e)}")
-        else:
-            errors.append("Docling not available")
+                self.logger.error(f"[PARSER] PyMuPDF failed for {filename}: {e}")
+                errors.append(f"PyMuPDF failed: {str(e)}")
+        elif file_type == 'image':
+            try:
+                self.logger.info(f"[PARSER] Loading image for {filename}")
+                image = Image.open(file_path)
+                primary_result = self._ocr_image(image, filename)
+                if self._check_text_quality(primary_result.get('raw_text', '')):
+                    self.logger.info(f"[PARSER] Direct image OCR successful for {filename}")
+                    metadata = primary_result.get("metadata", {})
+                    metadata.setdefault("warnings", warnings)
+                    return {
+                        "success": True,
+                        "source_type": file_type,
+                        "parser": "ocr",
+                        "raw_text": primary_result['raw_text'],
+                        "pages": primary_result['pages'],
+                        "blocks": primary_result['blocks'],
+                        "tables": primary_result['tables'],
+                        "metadata": metadata,
+                        "ocr_used": True,
+                        "fallback_used": False,
+                        "errors": []
+                    }
+                primary_quality_poor = True
+                errors.append("Image OCR quality poor")
+            except Exception as e:
+                self.logger.error(f"[PARSER] Image processing failed for {filename}: {e}")
+                errors.append(f"Image processing failed: {str(e)}")
         
-        # Fallback to OCR
-        if self._ocr_available:
+        # Fallback to OCR if primary method failed or produced poor quality
+        if self._ocr_available and primary_quality_poor:
             try:
                 self.logger.info(f"[PARSER] Starting OCR fallback for {filename}")
                 ocr_result = self._extract_with_ocr(file_path, file_type)
@@ -769,19 +639,19 @@ class GraniteDoclingService:
                 # Check OCR text quality
                 if self._check_text_quality(ocr_result['raw_text']):
                     self.logger.info(f"[PARSER] OCR fallback successful for {filename}")
-                    if docling_result:
-                        merged_result = self._merge_docling_ocr_result(docling_result, ocr_result)
+                    if primary_result:
+                        merged_result = self._merge_extraction_results(primary_result, ocr_result)
                         metadata = merged_result.get("metadata", {})
                         metadata.setdefault("warnings", warnings)
                         metadata["ocr_used"] = True
                         metadata["fallback_used"] = True
-                        if docling_quality_poor:
-                            warnings.append("OCR fallback used after low-quality Docling extraction")
+                        if primary_quality_poor:
+                            warnings.append("OCR fallback used after low-quality initial extraction")
                             metadata["warnings"] = warnings
                         return {
                             "success": True,
                             "source_type": file_type,
-                            "parser": "docling",
+                            "parser": file_type if file_type == 'image' else "ocr",
                             "raw_text": merged_result['raw_text'],
                             "pages": merged_result['pages'],
                             "blocks": merged_result['blocks'],
@@ -814,12 +684,15 @@ class GraniteDoclingService:
             except Exception as e:
                 self.logger.error(f"[PARSER] OCR fallback failed for {filename}: {e}")
                 errors.append(f"OCR failed: {str(e)}")
-                if docling_result:
-                    return self._build_ocr_failure_response(file_type, errors, warnings, docling_result)
+                if primary_result:
+                    return self._build_ocr_failure_response(file_type, errors, warnings, primary_result)
         else:
-            errors.append("OCR not available")
-            if docling_result:
-                return self._build_ocr_failure_response(file_type, errors, warnings, docling_result)
+            if self._ocr_available:
+                errors.append("OCR not needed - primary extraction succeeded")
+            else:
+                errors.append("OCR not available")
+                if primary_result:
+                    return self._build_ocr_failure_response(file_type, errors, warnings, primary_result)
         
         # Both methods failed
         self.logger.error(f"[PARSER] All extraction methods failed for {filename}")
@@ -847,30 +720,26 @@ class GraniteDoclingService:
     
     def get_supported_formats(self) -> List[str]:
         """Get list of supported file formats"""
-        formats = []
-        
-        if self._docling_converter:
-            formats.extend(['pdf', 'docx', 'image', 'txt'])
+        formats = ['pdf', 'image']
         
         if self._ocr_available:
             formats.extend(['pdf', 'image'])
         
-        return list(set(formats))  # Remove duplicates
+        return list(set(formats))
 
     def get_service_info(self) -> Dict[str, Any]:
         """Get service information"""
         return {
             "service_name": "GraniteDoclingService",
-            "docling_available": self._docling_converter is not None,
             "ocr_available": self._ocr_available,
             "supported_formats": self.get_supported_formats(),
-            "source_types": ["pdf", "image", "docx", "txt"],
+            "source_types": ["pdf", "image"],
             "ocr_languages_available": self._get_available_ocr_languages(),
             "ocr_languages_preferred": ["eng+hin+mar", "eng"],
             "parse_contract": {
                 "success": True,
-                "source_type": "pdf|image|docx|txt",
-                "parser": "docling|ocr|none",
+                "source_type": "pdf|image",
+                "parser": "pymupdf|ocr|none",
                 "raw_text": "...",
                 "pages": [],
                 "blocks": [],
