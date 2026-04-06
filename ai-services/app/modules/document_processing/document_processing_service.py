@@ -6,9 +6,13 @@ from typing import Optional, Dict, Any, List
 import uuid
 import sys
 import os
+import logging
 
 # Add ML service path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'ml'))
+
+# Runtime health check - CRITICAL for production stability
+from .runtime_health import ensure_runtime_ready, get_runtime_health
 
 from .service_schema import DocumentProcessingRequest, DocumentProcessingResult
 from .classification_service import DocumentClassificationService
@@ -33,6 +37,17 @@ class DocumentProcessingService:
     """Clean orchestration service for document processing operations"""
     
     def __init__(self):
+        # CRITICAL: Ensure runtime is ready before initializing services
+        try:
+            ensure_runtime_ready()
+            logger = logging.getLogger(__name__)
+            health_status = get_runtime_health()
+            logger.info(f"[HEALTH] Runtime ready - Status: {health_status['overall_status']}")
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"[HEALTH] Runtime not ready: {e}")
+            raise RuntimeError(f"Document processing service cannot start: {e}")
+        
         # Initialize rebuilt services
         self.classification_service = DocumentClassificationService()
         self.extraction_service = DocumentExtractionService()
@@ -116,6 +131,68 @@ class DocumentProcessingService:
         Returns:
             DocumentProcessingResult with processing results
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Ensure options exists
+        options = options or {}
+        
+        # PART 1: REQUIRED TEXT EXTRACTION ENTRY STEP
+        # If valid OCR text already exists, use it; otherwise extract from file
+        existing_ocr_text = options.get("ocr_text")
+        if existing_ocr_text and isinstance(existing_ocr_text, str) and existing_ocr_text.strip():
+            logger.info(f"[EXTRACT] Using existing OCR text: {len(existing_ocr_text)} chars")
+        else:
+            # Extract text from binary file before workflow
+            if file_data:
+                try:
+                    extracted_text = self._extract_text_from_file(file_data, filename)
+                    logger.info(f"[EXTRACT] Extracted text length: {len(extracted_text)}")
+                    
+                    # PART 5: FAIL EXPLICITLY ON EMPTY EXTRACTION
+                    if not extracted_text.strip():
+                        logger.error(f"[EXTRACT] Empty text extraction for {filename}")
+                        return DocumentProcessingResult(
+                            request_id=str(uuid.uuid4()),
+                            success=False,
+                            processing_time_ms=0,
+                            processing_type=processing_type,
+                            filename=filename,
+                            data=None,
+                            metadata={},
+                            error_message="Unable to extract text from document - file may be corrupted or unreadable"
+                        )
+                    
+                    # PART 2: PASS EXTRACTED TEXT INTO OPTIONS
+                    options["ocr_text"] = extracted_text
+                    logger.info(f"[EXTRACT] Passing extracted text into workflow")
+                    
+                except Exception as extraction_error:
+                    logger.error(f"[EXTRACT] Text extraction failed: {extraction_error}")
+                    return DocumentProcessingResult(
+                        request_id=str(uuid.uuid4()),
+                        success=False,
+                        processing_time_ms=0,
+                        processing_type=processing_type,
+                        filename=filename,
+                        data=None,
+                        metadata={},
+                        error_message=f"Text extraction failed: {str(extraction_error)}"
+                    )
+            else:
+                logger.warning("[EXTRACT] No file data provided for extraction")
+                return DocumentProcessingResult(
+                    request_id=str(uuid.uuid4()),
+                    success=False,
+                    processing_time_ms=0,
+                    processing_type=processing_type,
+                    filename=filename,
+                    data=None,
+                    metadata={},
+                    error_message="No file data provided for text extraction"
+                )
+        
+        # PART 3: CALL PROCESSOR WITH EXTRACTED TEXT
         processing_result = self.processor.process_document_workflow(
             file_data, filename, processing_type, options
         )
@@ -137,14 +214,107 @@ class DocumentProcessingService:
         Returns:
             List of DocumentProcessingResult objects
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         # Set processing type for each document unless explicitly provided
         for doc in documents:
             if 'processing_type' not in doc:
                 doc['processing_type'] = processing_type
         
-        batch_results = self.processor.process_batch_documents(documents)
+        # PART 6: ENSURE ALL PROCESSING PATHS USE THE SAME FIX
+        # Apply text extraction to each document before batch processing
+        processed_documents = []
+        for doc in documents:
+            file_data = doc.get('file_data')
+            filename = doc.get('filename', f'document_{len(processed_documents)+1}')
+            options = doc.get('options', {})
+            
+            # Ensure options exists
+            if not options:
+                options = {}
+                doc['options'] = options
+            
+            # PART 1: REQUIRED TEXT EXTRACTION ENTRY STEP
+            existing_ocr_text = options.get("ocr_text")
+            if existing_ocr_text and isinstance(existing_ocr_text, str) and existing_ocr_text.strip():
+                logger.info(f"[EXTRACT] Batch using existing OCR text for {filename}: {len(existing_ocr_text)} chars")
+            else:
+                # Extract text from binary file before workflow
+                if file_data:
+                    try:
+                        extracted_text = self._extract_text_from_file(file_data, filename)
+                        logger.info(f"[EXTRACT] Batch extracted text for {filename}: {len(extracted_text)} chars")
+                        
+                        # PART 5: FAIL EXPLICITLY ON EMPTY EXTRACTION
+                        if not extracted_text.strip():
+                            logger.error(f"[EXTRACT] Batch empty text extraction for {filename}")
+                            # Create error result for this document
+                            error_result = DocumentProcessingResult(
+                                request_id=str(uuid.uuid4()),
+                                success=False,
+                                processing_time_ms=0,
+                                processing_type=doc.get('processing_type', processing_type),
+                                filename=filename,
+                                data=None,
+                                metadata={},
+                                error_message="Unable to extract text from document - file may be corrupted or unreadable"
+                            )
+                            processed_documents.append(error_result)
+                            continue
+                        
+                        # PART 2: PASS EXTRACTED TEXT INTO OPTIONS
+                        options["ocr_text"] = extracted_text
+                        logger.info(f"[EXTRACT] Batch passing extracted text for {filename}")
+                        
+                    except Exception as extraction_error:
+                        logger.error(f"[EXTRACT] Batch text extraction failed for {filename}: {extraction_error}")
+                        # Create error result for this document
+                        error_result = DocumentProcessingResult(
+                            request_id=str(uuid.uuid4()),
+                            success=False,
+                            processing_time_ms=0,
+                            processing_type=doc.get('processing_type', processing_type),
+                            filename=filename,
+                            data=None,
+                            metadata={},
+                            error_message=f"Text extraction failed: {str(extraction_error)}"
+                        )
+                        processed_documents.append(error_result)
+                        continue
+                else:
+                    logger.warning(f"[EXTRACT] Batch no file data for {filename}")
+                    # Create error result for this document
+                    error_result = DocumentProcessingResult(
+                        request_id=str(uuid.uuid4()),
+                        success=False,
+                        processing_time_ms=0,
+                        processing_type=doc.get('processing_type', processing_type),
+                        filename=filename,
+                        data=None,
+                        metadata={},
+                        error_message="No file data provided for text extraction"
+                    )
+                    processed_documents.append(error_result)
+                    continue
+            
+            # Add processed document to batch
+            processed_documents.append(doc)
         
-        return [self._convert_to_result_format(result) for result in batch_results]
+        # Separate successfully processed documents from errors
+        successful_docs = [doc for doc in processed_documents if not isinstance(doc, DocumentProcessingResult)]
+        error_results = [doc for doc in processed_documents if isinstance(doc, DocumentProcessingResult)]
+        
+        # Process successful documents through processor
+        batch_results = []
+        if successful_docs:
+            processor_results = self.processor.process_batch_documents(successful_docs)
+            batch_results = [self._convert_to_result_format(result) for result in processor_results]
+        
+        # Combine error results with processor results
+        all_results = error_results + batch_results
+        
+        return all_results
     
     async def classify_document(
         self,
@@ -163,6 +333,62 @@ class DocumentProcessingService:
         Returns:
             Document classification result
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Ensure options exists
+        options = options or {}
+        
+        # PART 1: REQUIRED TEXT EXTRACTION ENTRY STEP
+        # If valid OCR text already exists, use it; otherwise extract from file
+        existing_ocr_text = options.get("ocr_text")
+        if existing_ocr_text and isinstance(existing_ocr_text, str) and existing_ocr_text.strip():
+            logger.info(f"[EXTRACT] Using existing OCR text for classification: {len(existing_ocr_text)} chars")
+        else:
+            # Extract text from binary file before classification
+            if file_data:
+                try:
+                    extracted_text = self._extract_text_from_file(file_data, filename)
+                    logger.info(f"[EXTRACT] Extracted text for classification: {len(extracted_text)} chars")
+                    
+                    # PART 5: FAIL EXPLICITLY ON EMPTY EXTRACTION
+                    if not extracted_text.strip():
+                        logger.error(f"[EXTRACT] Empty text extraction for classification {filename}")
+                        return {
+                            "document_type": "unknown",
+                            "classification_confidence": 0.0,
+                            "classification_reasoning": {},
+                            "processing_time_ms": 0,
+                            "request_id": str(uuid.uuid4()),
+                            "error_message": "Unable to extract text from document for classification"
+                        }
+                    
+                    # PART 2: PASS EXTRACTED TEXT INTO OPTIONS
+                    options["ocr_text"] = extracted_text
+                    logger.info(f"[EXTRACT] Passing extracted text to classification")
+                    
+                except Exception as extraction_error:
+                    logger.error(f"[EXTRACT] Text extraction failed for classification: {extraction_error}")
+                    return {
+                        "document_type": "unknown",
+                        "classification_confidence": 0.0,
+                        "classification_reasoning": {},
+                        "processing_time_ms": 0,
+                        "request_id": str(uuid.uuid4()),
+                        "error_message": f"Text extraction failed: {str(extraction_error)}"
+                    }
+            else:
+                logger.warning("[EXTRACT] No file data provided for classification extraction")
+                return {
+                    "document_type": "unknown",
+                    "classification_confidence": 0.0,
+                    "classification_reasoning": {},
+                    "processing_time_ms": 0,
+                    "request_id": str(uuid.uuid4()),
+                    "error_message": "No file data provided for text extraction"
+                }
+        
+        # PART 3: CALL PROCESSOR WITH EXTRACTED TEXT
         result = self.processor.process_document_workflow(
             file_data, filename, "classify", options
         )
@@ -185,7 +411,8 @@ class DocumentProcessingService:
                 "classification_confidence": 0.0,
                 "classification_reasoning": {},
                 "processing_time_ms": result.get("processing_time_ms", 0),
-                "request_id": result.get("request_id", "")
+                "request_id": result.get("request_id", ""),
+                "error_message": result.get("error_message", "Classification failed")
             }
     
     def get_supported_processing_types(self) -> List[Dict[str, str]]:
@@ -435,6 +662,7 @@ class DocumentProcessingService:
     def _convert_to_result_format(self, processing_result: Dict[str, Any]) -> DocumentProcessingResult:
         """
         Convert processor result to DocumentProcessingResult format
+        STABILIZED: Single normalized data flow, no mixed dict/object access
         
         Args:
             processing_result: Raw processor result
@@ -442,341 +670,378 @@ class DocumentProcessingService:
         Returns:
             DocumentProcessingResult model
         """
-        data = processing_result.get("data")
+        logger = logging.getLogger(__name__)
         
-        # Add LLM analysis if we have extracted data
-        if data and isinstance(data, dict):
+        # STEP 1: Normalize input to safe dict at the top
+        normalized_result = self._safe_dict(processing_result)
+        data = self._safe_dict(normalized_result.get("data"))
+        
+        # STEP 2: Build extracted_data once with all required fields
+        extracted_data = {
+            "document_type": data.get("document_type", "unknown"),
+            "structured_data": self._safe_dict(data.get("structured_data")),
+            "extracted_fields": self._safe_dict(data.get("extracted_fields")),
+            "missing_fields": self._safe_list(data.get("missing_fields")),
+            "confidence": self._safe_number(data.get("confidence") or data.get("extraction_confidence", 0)),
+            "reasoning": self._safe_list(data.get("reasoning")),
+            "canonical": self._safe_dict(data.get("canonical")),
+            "classification_confidence": self._safe_number(data.get("classification_confidence", 0)),
+            "classification_reasoning": self._safe_list(data.get("classification_reasoning"))
+        }
+        
+        # STEP 3: Generate intelligence outputs with safe fallbacks
+        intelligence_outputs = self._generate_intelligence_outputs(extracted_data)
+        
+        # STEP 4: Merge intelligence outputs into both extracted_data and response data
+        extracted_data.update(intelligence_outputs)
+        data.update(intelligence_outputs)
+        
+        # STEP 5: Apply ML analysis with deterministic fallbacks
+        ml_outputs = self._apply_ml_analysis(extracted_data, data)
+        extracted_data.update(ml_outputs)
+        data.update(ml_outputs)
+        
+        # STEP 6: Apply supporting document sanitization if needed
+        if extracted_data.get("document_type") == "supporting_document":
+            extracted_data = self._sanitize_supporting_document(extracted_data)
+            data["structured_data"] = extracted_data.get("structured_data", {})
+            data["extracted_fields"] = extracted_data.get("extracted_fields", {})
+            
+            # Re-apply intelligence outputs for supporting documents
+            data.update({k: intelligence_outputs.get(k) for k in ["summary", "ai_summary", "case_insight", "decision_support", "predictions", "decision"] if k in intelligence_outputs})
+            
+            # Apply AI analysis for supporting documents
+            ai_outputs = self._apply_ai_analysis(extracted_data)
+            data.update(ai_outputs)
+        
+        # STEP 7: Final validation and fixes
+        self._apply_final_validation(data, extracted_data)
+        
+        # STEP 8: Apply deterministic verification routing
+        self._authoritative_final_evaluation(extracted_data, data)
+        
+        # STEP 9: Build final result
+        return DocumentProcessingResult(
+            request_id=normalized_result.get("request_id", ""),
+            success=normalized_result.get("success", False),
+            processing_time_ms=normalized_result.get("processing_time_ms", 0),
+            processing_type=normalized_result.get("processing_type", ""),
+            filename=normalized_result.get("filename", ""),
+            data=data,
+            metadata=normalized_result.get("metadata", {}),
+            error_message=normalized_result.get("error_message")
+        )
+    def _generate_intelligence_outputs(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate intelligence outputs with safe fallbacks"""
+        logger = logging.getLogger(__name__)
+        
+        # Initialize outputs with safe defaults
+        summary = ""
+        case_insight = []
+        decision_support = {}
+        predictions = {}
+        
+        # Generate each intelligence component independently
+        try:
+            tmp_summary = self.intelligence_service.generate_document_summary(extracted_data)
+            summary = self._safe_str(tmp_summary)
+        except Exception as ie:
+            logger.warning(f"[INTELLIGENCE] generate_document_summary failed: {ie}")
+            
+        try:
+            tmp_case_insight = self.intelligence_service.generate_case_insight(extracted_data)
+            case_insight = self._safe_list(tmp_case_insight)
+        except Exception as ie:
+            logger.warning(f"[INTELLIGENCE] generate_case_insight failed: {ie}")
+            
+        try:
+            tmp_decision_support = self.intelligence_service.generate_decision_support(extracted_data)
+            decision_support = self._safe_dict(tmp_decision_support)
+        except Exception as ie:
+            logger.warning(f"[INTELLIGENCE] generate_decision_support failed: {ie}")
+            
+        try:
+            tmp_predictions = self.intelligence_service.generate_predictions(extracted_data)
+            predictions = self._safe_dict(tmp_predictions)
+        except Exception as ie:
+            logger.warning(f"[INTELLIGENCE] generate_predictions failed: {ie}")
+        
+        # Apply deterministic fallbacks
+        if not summary:
+            summary = self._build_officer_summary(extracted_data)
+            
+        # Normalize decision_support
+        if not decision_support:
+            decision_support = {"decision": "review", "confidence": 0.5, "reasoning": []}
+        else:
+            decision_support.setdefault("decision", "review")
+            decision_support.setdefault("confidence", 0.5)
+            if not isinstance(decision_support.get("reasoning"), list):
+                decision_support["reasoning"] = self._safe_list(decision_support.get("reasoning"))
+        
+        if not predictions:
+            predictions = {}
+            
+        # Build final intelligence outputs
+        final_decision = decision_support.get("decision", "review")
+        
+        return {
+            "summary": summary,
+            "ai_summary": summary,  # PART 3: Single source for frontend
+            "case_insight": case_insight,
+            "decision_support": decision_support,
+            "predictions": predictions,
+            "decision": final_decision
+        }
+
+    def _apply_ml_analysis(self, extracted_data: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply ML analysis with deterministic fallbacks"""
+        logger = logging.getLogger(__name__)
+        
+        ml_insights = {}
+        predictions = {}
+        
+        # RANDOM FOREST ML INTEGRATION (separate, defensive)
+        if ML_SERVICE_AVAILABLE:
             try:
-                # Get extracted data for LLM analysis - CRITICAL: Preserve all fields including canonical
-                extracted_data = {
-                    "document_type": data.get("document_type", "unknown"),
-                    "structured_data": data.get("structured_data", {}),
-                    "extracted_fields": data.get("extracted_fields", {}),
-                    "missing_fields": data.get("missing_fields", []),
-                    "confidence": data.get("confidence") or data.get("extraction_confidence") or 0,
-                    "reasoning": data.get("reasoning", []),
-                    "canonical": data.get("canonical", {}),  # CRITICAL: Preserve canonical field
-                    "classification_confidence": data.get("classification_confidence", 0),
-                    "classification_reasoning": data.get("classification_reasoning", [])
+                ml_analysis = None
+                try:
+                    ml_analysis = analyze_document_risk(extracted_data)
+                except Exception as ml_error:
+                    logger.warning(f"[ML] Random Forest ML call failed: {ml_error}")
+                    ml_analysis = {}
+
+                ml_analysis = self._safe_dict(ml_analysis)
+
+                # Safe nested fields
+                pte = self._safe_dict(ml_analysis.get("processing_time_estimate", {}))
+                priority_score = self._safe_number(ml_analysis.get("priority_score", 50.0), default=50.0)
+                queue = ml_analysis.get("queue") if isinstance(ml_analysis.get("queue"), str) else "NORMAL"
+                risk_level = ml_analysis.get("risk_level") if isinstance(ml_analysis.get("risk_level"), str) else "Medium"
+                processing_time_days = pte.get("estimated_days") if isinstance(pte.get("estimated_days"), (int, float)) else 2
+                approval_likelihood_num = self._safe_number(ml_analysis.get("approval_likelihood", 50), default=50)
+                approval_likelihood = f"{int(round(approval_likelihood_num))}%"
+                model_confidence = self._safe_number(ml_analysis.get("confidence_score", 0.5), default=0.5)
+                auto_decision = ml_analysis.get("auto_decision") if isinstance(ml_analysis.get("auto_decision"), str) else "manual_review"
+
+                ml_insights = {
+                    "priority_score": priority_score,
+                    "queue": queue,
+                    "risk_level": risk_level,
+                    "processing_time": processing_time_days,
+                    "approval_likelihood": approval_likelihood,
+                    "model_confidence": model_confidence,
+                    "auto_decision": auto_decision,
+                    "prediction_method": "random_forest"
                 }
-                
-                if extracted_data.get("structured_data") or extracted_data.get("canonical"):
-                    # Ensure extraction_confidence is set in final output (this is the field in the Pydantic model)
-                    data["extraction_confidence"] = extracted_data["confidence"]
 
-                    # Defensive: initialize intelligence outputs with safe defaults
-                    summary = ""
-                    case_insight = []
-                    decision_support = {"decision": "review", "confidence": 0.5, "reasoning": []}
-                    predictions = {}
-
-                    # Generate intelligence outputs independently so one failing piece doesn't cascade
-                    try:
-                        try:
-                            tmp_summary = self.intelligence_service.generate_document_summary(extracted_data)
-                        except Exception as ie:
-                            print(f"DEBUG: generate_document_summary failed: {ie}")
-                            tmp_summary = None
-
-                        try:
-                            tmp_case_insight = self.intelligence_service.generate_case_insight(extracted_data)
-                        except Exception as ie:
-                            print(f"DEBUG: generate_case_insight failed: {ie}")
-                            tmp_case_insight = None
-
-                        try:
-                            tmp_decision_support = self.intelligence_service.generate_decision_support(extracted_data)
-                        except Exception as ie:
-                            print(f"DEBUG: generate_decision_support failed: {ie}")
-                            tmp_decision_support = None
-
-                        try:
-                            tmp_predictions = self.intelligence_service.generate_predictions(extracted_data)
-                        except Exception as ie:
-                            print(f"DEBUG: generate_predictions failed: {ie}")
-                            tmp_predictions = None
-
-                        # Coerce to safe types and apply defaults
-                        summary = self._safe_str(tmp_summary)
-                        if not summary:
-                            # Deterministic officer summary fallback built from extracted facts
-                            summary = self._build_officer_summary(extracted_data)
-
-                        case_insight = self._safe_list(tmp_case_insight)
-                        decision_support = self._safe_dict(tmp_decision_support)
-                        # Ensure decision_support contract
-                        decision_support.setdefault("decision", "review")
-                        decision_support.setdefault("confidence", 0.5)
-                        if not isinstance(decision_support.get("reasoning"), list):
-                            decision_support["reasoning"] = self._safe_list(decision_support.get("reasoning"))
-
-                        predictions = self._safe_dict(tmp_predictions)
-
-                        # Attach intelligence outputs to extracted_data and response data
-                        extracted_data["summary"] = summary
-                        extracted_data["case_insight"] = case_insight
-                        extracted_data["decision_support"] = decision_support
-                        extracted_data["predictions"] = predictions
-                        extracted_data["decision"] = decision_support.get("decision", "review")
-
-                        if isinstance(data, dict):
-                            data["summary"] = summary
-                            data["ai_summary"] = summary
-                            data["case_insight"] = case_insight
-                            data["decision_support"] = decision_support
-                            data["predictions"] = predictions
-                            data["decision"] = extracted_data["decision"]
-                        else:
-                            data.summary = summary
-                            data.ai_summary = summary
-                            data.case_insight = case_insight
-                            data.decision_support = decision_support
-                            data.predictions = predictions
-                            data.decision = extracted_data["decision"]
-
-                    except Exception as e:
-                        # Defensive catch-all: keep deterministic summary and facts; do not cascade to full failure
-                        print(f"DEBUG: Unexpected intelligence processing error: {e}")
-                        # Ensure safe minimal outputs
-                        summary = summary or self._build_officer_summary(extracted_data)
-                        case_insight = case_insight or []
-                        decision_support = self._safe_dict(decision_support)
-                        decision_support.setdefault("decision", "review")
-                        decision_support.setdefault("confidence", 0.5)
-                        predictions = predictions or {}
-
-                        extracted_data["summary"] = summary
-                        extracted_data["case_insight"] = case_insight
-                        extracted_data["decision_support"] = decision_support
-                        extracted_data["predictions"] = predictions
-                        extracted_data["decision"] = decision_support.get("decision", "review")
-
-                        if isinstance(data, dict):
-                            data["summary"] = summary
-                            data["ai_summary"] = summary
-                            data["case_insight"] = case_insight
-                            data["decision_support"] = decision_support
-                            data["predictions"] = predictions
-                            data["decision"] = extracted_data["decision"]
-                        else:
-                            data.summary = summary
-                            data.ai_summary = summary
-                            data.case_insight = case_insight
-                            data.decision_support = decision_support
-                            data.predictions = predictions
-                            data.decision = extracted_data["decision"]
-
-                    # RANDOM FOREST ML INTEGRATION (separate, defensive)
-                    if ML_SERVICE_AVAILABLE:
-                        try:
-                            ml_analysis = None
-                            try:
-                                ml_analysis = analyze_document_risk(extracted_data)
-                            except Exception as ml_error:
-                                print(f"Random Forest ML call failed: {ml_error}")
-                                ml_analysis = {}
-
-                            ml_analysis = self._safe_dict(ml_analysis)
-
-                            # Safe nested fields
-                            pte = self._safe_dict(ml_analysis.get("processing_time_estimate", {}))
-                            priority_score = self._safe_number(ml_analysis.get("priority_score", 50.0), default=50.0)
-                            queue = ml_analysis.get("queue") if isinstance(ml_analysis.get("queue"), str) else "NORMAL"
-                            risk_level = ml_analysis.get("risk_level") if isinstance(ml_analysis.get("risk_level"), str) else "Medium"
-                            processing_time_days = pte.get("estimated_days") if isinstance(pte.get("estimated_days"), (int, float)) else 2
-                            approval_likelihood_num = self._safe_number(ml_analysis.get("approval_likelihood", 50), default=50)
-                            approval_likelihood = f"{int(round(approval_likelihood_num))}%"
-                            model_confidence = self._safe_number(ml_analysis.get("confidence_score", 0.5), default=0.5)
-                            auto_decision = ml_analysis.get("auto_decision") if isinstance(ml_analysis.get("auto_decision"), str) else "manual_review"
-
-                            ml_insights = {
-                                "priority_score": priority_score,
-                                "queue": queue,
-                                "risk_level": risk_level,
-                                "processing_time": processing_time_days,
-                                "approval_likelihood": approval_likelihood,
-                                "model_confidence": model_confidence,
-                                "auto_decision": auto_decision,
-                                "prediction_method": "random_forest"
-                            }
-
-                            # If ML signals high risk, add reasoning and escalate if appropriate
-                            if str(risk_level).lower() == "high":
-                                if not isinstance(decision_support.get("reasoning"), list):
-                                    decision_support["reasoning"] = self._safe_list(decision_support.get("reasoning"))
-                                decision_support["reasoning"].append("High risk detected by ML model")
-                                # Escalate to manual review only if not an explicit approve
-                                if decision_support.get("decision") != "approve":
-                                    decision_support["decision"] = "manual_review"
-                                    extracted_data["decision"] = "manual_review"
-                                    if isinstance(data, dict):
-                                        data["decision"] = "manual_review"
-
-                            extracted_data["ml_insights"] = ml_insights
-                            if isinstance(data, dict):
-                                data["ml_insights"] = ml_insights
-                            else:
-                                data.ml_insights = ml_insights
-
-                            ml_predictions = {
-                                "priority_score": priority_score,
-                                "queue": queue,
-                                "risk_level": risk_level,
-                                "model_confidence": model_confidence,
-                                "prediction_method": "random_forest",
-                                "processing_time": f"{processing_time_days} days",
-                                "approval_likelihood": approval_likelihood
-                            }
-
-                            extracted_data["predictions"] = ml_predictions
-                            if isinstance(data, dict):
-                                data["predictions"] = ml_predictions
-                            else:
-                                data.predictions = ml_predictions
-
-                        except Exception as ml_error:
-                            print(f"Random Forest ML error: {ml_error}")
-                            # Fall back to deterministic priority computation (does not overwrite intelligence outputs)
-                            self._fallback_ml_priority(extracted_data, data, decision_support)
-                    else:
-                        # No ML service available -> deterministic fallback
-                        self._fallback_ml_priority(extracted_data, data, decision_support)
-                
-                # Apply supporting document sanitization
-                if extracted_data.get("document_type") == "supporting_document":
-                    extracted_data = self._sanitize_supporting_document(extracted_data)
-                    if isinstance(data, dict):
-                        data["structured_data"] = extracted_data.get("structured_data", {})
-                        data["extracted_fields"] = extracted_data.get("extracted_fields", {})
-                    else:
-                        data.structured_data = extracted_data.get("structured_data", {})
-                        data.extracted_fields = extracted_data.get("extracted_fields", {})
-                    
-                    # Add intelligence data to main data object for final response
-                    if isinstance(data, dict):
-                        data["summary"] = summary
-                        data["ai_summary"] = summary
-                        data["case_insight"] = case_insight
+                # If ML signals high risk, add reasoning and escalate if appropriate
+                if str(risk_level).lower() == "high":
+                    decision_support = data.get("decision_support", {})
+                    if not isinstance(decision_support.get("reasoning"), list):
+                        decision_support["reasoning"] = self._safe_list(decision_support.get("reasoning"))
+                    decision_support["reasoning"].append("High risk detected by ML model")
+                    # Escalate to manual review only if not an explicit approve
+                    if decision_support.get("decision") != "approve":
+                        decision_support["decision"] = "manual_review"
+                        extracted_data["decision"] = "manual_review"
+                        data["decision"] = "manual_review"
                         data["decision_support"] = decision_support
-                        data["predictions"] = predictions
-                        data["decision"] = extracted_data.get("decision", "review")
-                    else:
-                        data.summary = summary
-                        data.ai_summary = summary
-                        data.case_insight = case_insight
-                        data.decision_support = decision_support
-                        data.predictions = predictions
-                        data.decision = extracted_data.get("decision", "review")
 
-                    # Run LLM analysis defensively
-                    try:
-                        ai_output = analyze_application(extracted_data)
-                    except Exception as ai_err:
-                        print(f"DEBUG: analyze_application failed: {ai_err}")
-                        ai_output = {}
+                predictions = {
+                    "priority_score": priority_score,
+                    "queue": queue,
+                    "risk_level": risk_level,
+                    "model_confidence": model_confidence,
+                    "prediction_method": "random_forest",
+                    "processing_time": f"{processing_time_days} days",
+                    "approval_likelihood": approval_likelihood
+                }
 
-                    ai_output = self._safe_dict(ai_output)
+            except Exception as ml_error:
+                logger.warning(f"[ML] Random Forest ML error: {ml_error}")
+                # Fall back to deterministic priority computation
+                self._fallback_ml_priority(extracted_data, data, data.get("decision_support", {}))
+        else:
+            # No ML service available -> deterministic fallback
+            self._fallback_ml_priority(extracted_data, data, data.get("decision_support", {}))
+        
+        return {
+            "ml_insights": ml_insights,
+            "predictions": predictions
+        }
 
-                    # Add AI analysis to the main data object (not nested under extracted_data)
-                    if isinstance(data, dict):
-                        data["ai_summary"] = self._safe_str(ai_output.get("ai_summary", ""))
-                    else:
-                        data.ai_summary = self._safe_str(ai_output.get("ai_summary", ""))
+    def _apply_ai_analysis(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply AI analysis for supporting documents"""
+        logger = logging.getLogger(__name__)
+        
+        # Run LLM analysis defensively
+        try:
+            ai_output = analyze_application(extracted_data)
+        except Exception as ai_err:
+            logger.warning(f"[AI] analyze_application failed: {ai_err}")
+            ai_output = {}
 
-                    # Merge AI risk flags with existing ones (AI flags come first)
-                    ai_risk_flags = self._safe_list(ai_output.get("risk_flags", []))
-                    if isinstance(data, dict):
-                        existing_risk_flags = self._safe_list(data.get("risk_flags", []))
-                        data["risk_flags"] = ai_risk_flags + existing_risk_flags
-                    else:
-                        existing_risk_flags = data.risk_flags or []
-                        data.risk_flags = ai_risk_flags + existing_risk_flags
+        ai_output = self._safe_dict(ai_output)
 
-                    # FIX 1: SINGLE SOURCE OF TRUTH - Deterministic decision_support ALWAYS takes precedence
-                    deterministic_decision_support = self._safe_dict(extracted_data.get("decision_support"))
-                    ai_decision_support = self._safe_dict(ai_output.get("decision_support"))
+        # Add AI analysis to the main data object
+        ai_updates = {
+            "ai_summary": self._safe_str(ai_output.get("ai_summary", ""))
+        }
 
-                    if deterministic_decision_support:
-                        # Ensure top-level decision matches deterministic decision_support (SINGLE SOURCE OF TRUTH)
-                        if isinstance(data, dict):
-                            data["decision"] = deterministic_decision_support.get("decision", "review")
-                        else:
-                            data.decision = deterministic_decision_support.get("decision", "review")
-                    elif ai_decision_support:
-                        # Only use AI decision_support if deterministic one is absent
-                        if isinstance(data, dict):
-                            data["decision_support"] = ai_decision_support
-                            # Sync top-level decision with AI decision_support
-                            data["decision"] = ai_decision_support.get("decision", "review")
-                        else:
-                            data.decision_support = ai_decision_support
-                            # Sync top-level decision with AI decision_support
-                            data.decision = ai_decision_support.get("decision", "review")
-                    
-                    # STEP 7: LLM REFINEMENT LAYER - Add advisory block without overriding deterministic truth
-                    try:
-                        extracted_data_with_refinement = add_llm_refinement_to_response(extracted_data)
-                        
-                        # Add llm_refinement to main data object
-                        if isinstance(data, dict):
-                            data["llm_refinement"] = extracted_data_with_refinement.get("llm_refinement", {})
-                        else:
-                            data.llm_refinement = extracted_data_with_refinement.get("llm_refinement", {})
-                            
-                    except Exception as e:
-                        # LLM refinement failure should not break the pipeline
-                        fallback_refinement = {
-                            "refined_summary": "LLM refinement temporarily unavailable",
-                            "officer_note": "Proceed with deterministic analysis",
-                            "consistency_flags": [],
-                            "confidence_note": f"LLM refinement failed: {str(e)}"
-                        }
-                        
-                        if isinstance(data, dict):
-                            data["llm_refinement"] = fallback_refinement
-                        else:
-                            data.llm_refinement = fallback_refinement
-            except Exception as e:
-                # If LLM analysis fails, keep deterministic outputs and add minimal AI fallbacks
-                fallback_decision = "review"
-                if isinstance(data, dict):
-                    data["ai_summary"] = "AI analysis temporarily unavailable"
-                    data["risk_flags"] = [{
-                        "code": "AI_ANALYSIS_FAILED",
-                        "severity": "medium",
-                        "message": f"AI analysis failed: {str(e)}"
-                    }]
-                    # Only set decision_support if not already present
-                    if not data.get("decision_support"):
-                        data["decision_support"] = {
-                            "decision": fallback_decision,
-                            "confidence": 0.5,
-                            "reasoning": [f"AI analysis failed: {str(e)}"]
-                        }
-                    # Do not override an existing deterministic decision
-                    data.setdefault("decision", fallback_decision)
-                else:
-                    data.ai_summary = "AI analysis temporarily unavailable"
-                    data.risk_flags = [{
-                        "code": "AI_ANALYSIS_FAILED",
-                        "severity": "medium",
-                        "message": f"AI analysis failed: {str(e)}"
-                    }]
-                    if not getattr(data, "decision_support", None):
-                        data.decision_support = {
-                            "decision": fallback_decision,
-                            "confidence": 0.5,
-                            "reasoning": [f"AI analysis failed: {str(e)}"]
-                        }
-                    if not getattr(data, "decision", None):
-                        data.decision = fallback_decision
+        # Merge AI risk flags with existing ones (AI flags come first)
+        ai_risk_flags = self._safe_list(ai_output.get("risk_flags", []))
+        existing_risk_flags = self._safe_list(ai_updates.get("risk_flags", []))
+        ai_updates["risk_flags"] = ai_risk_flags + existing_risk_flags
+
+        # FIX 1: SINGLE SOURCE OF TRUTH - Deterministic decision_support ALWAYS takes precedence
+        deterministic_decision_support = self._safe_dict(extracted_data.get("decision_support"))
+        ai_decision_support = self._safe_dict(ai_output.get("decision_support"))
+
+        if deterministic_decision_support:
+            # Ensure top-level decision matches deterministic decision_support (SINGLE SOURCE OF TRUTH)
+            ai_updates["decision"] = deterministic_decision_support.get("decision", "review")
+        elif ai_decision_support:
+            # Only use AI decision_support if deterministic one is absent
+            ai_updates["decision_support"] = ai_decision_support
+            # Sync top-level decision with AI decision_support
+            ai_updates["decision"] = ai_decision_support.get("decision", "review")
+        
+        # STEP 7: LLM REFINEMENT LAYER - Add advisory block without overriding deterministic truth
+        try:
+            extracted_data_with_refinement = add_llm_refinement_to_response(extracted_data)
+            
+            # Add llm_refinement to main data object
+            ai_updates["llm_refinement"] = extracted_data_with_refinement.get("llm_refinement", {})
+                
+        except Exception as e:
+            # LLM refinement failure should not break the pipeline
+            fallback_refinement = {
+                "refined_summary": "LLM refinement temporarily unavailable",
+                "officer_note": "Proceed with deterministic analysis",
+                "consistency_flags": [],
+                "confidence_note": f"LLM refinement failed: {str(e)}"
+            }
+            
+            ai_updates["llm_refinement"] = fallback_refinement
+
+        return ai_updates
+
+    def _fallback_ml_priority(self, extracted_data: Dict[str, Any], data: Dict[str, Any], decision_support: Dict[str, Any]) -> None:
+        """
+        Deterministic ML priority fallback when ML service is unavailable
+        PART 6: Stabilize ML priority without replacing model
+        """
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Normalize input features for deterministic computation
+            document_type = extracted_data.get("document_type", "unknown")
+            confidence = extracted_data.get("confidence", 0.0)
+            missing_fields = extracted_data.get("missing_fields", [])
+            structured_data = extracted_data.get("structured_data", {})
+            
+            # Count identity and amount fields
+            identity_fields = ["farmer_name", "applicant_name", "aadhaar_number", "mobile_number"]
+            identity_count = sum(1 for field in identity_fields if structured_data.get(field))
+            
+            amount_fields = ["requested_amount", "claim_amount", "subsidy_amount", "amount"]
+            has_amount = any(structured_data.get(field) for field in amount_fields)
+            
+            # Count risk flags
+            risk_flags = extracted_data.get("risk_flags", [])
+            risk_count = len(risk_flags) if isinstance(risk_flags, list) else 0
+            
+            # Deterministic priority score (0-100)
+            # Base score from confidence
+            priority_score = confidence * 50
+            
+            # Bonus for identity fields
+            priority_score += identity_count * 10
+            
+            # Bonus for amount presence
+            if has_amount:
+                priority_score += 15
+            
+            # Penalty for missing fields
+            priority_score -= len(missing_fields) * 5
+            
+            # Penalty for risk flags
+            priority_score -= risk_count * 3
+            
+            # Clamp to valid range
+            priority_score = max(0, min(100, priority_score))
+            
+            # Deterministic queue assignment
+            if confidence < 0.5 or len(missing_fields) > 3 or risk_count > 2:
+                queue = "VERIFICATION_QUEUE"
+            elif priority_score > 70:
+                queue = "LOW"
+            elif priority_score > 40:
+                queue = "NORMAL"
+            else:
+                queue = "HIGH"
+            
+            # Deterministic risk level
+            if risk_count > 2 or confidence < 0.3:
+                risk_level = "High"
+            elif risk_count > 0 or confidence < 0.6:
+                risk_level = "Medium"
+            else:
+                risk_level = "Low"
+            
+            # Deterministic auto decision
+            if confidence < 0.4 or len(missing_fields) > 4 or risk_count > 3:
+                auto_decision = "manual_review"
+            elif confidence > 0.8 and len(missing_fields) == 0 and risk_count == 0:
+                auto_decision = "auto_approve"
+            else:
+                auto_decision = "review"
+            
+            # Build fallback ML insights
+            fallback_ml = {
+                "priority_score": priority_score,
+                "queue": queue,
+                "risk_level": risk_level,
+                "processing_time": 3 if queue == "VERIFICATION_QUEUE" else 2,
+                "approval_likelihood": max(20, 80 - risk_count * 10 - len(missing_fields) * 5),
+                "model_confidence": confidence,
+                "auto_decision": auto_decision,
+                "prediction_method": "deterministic_fallback"
+            }
+            
+            # Update both data structures
+            data["ml_insights"] = fallback_ml
+            data["predictions"] = fallback_ml.copy()
+            
+            logger.info(f"[ML] Deterministic fallback applied: priority={priority_score}, queue={queue}, risk={risk_level}")
+            
+        except Exception as e:
+            logger.error(f"[ML] Deterministic fallback failed: {e}")
+            # Ultra-safe fallback
+            safe_fallback = {
+                "priority_score": 50.0,
+                "queue": "NORMAL",
+                "risk_level": "Medium",
+                "processing_time": 2,
+                "approval_likelihood": 50,
+                "model_confidence": 0.5,
+                "auto_decision": "review",
+                "prediction_method": "safe_fallback"
+            }
+            data["ml_insights"] = safe_fallback
+            data["predictions"] = safe_fallback.copy()
+
+    def _apply_final_validation(self, data: Dict[str, Any], extracted_data: Dict[str, Any]) -> None:
+        """Apply final validation and fixes to ensure data consistency"""
+        logger = logging.getLogger(__name__)
         
         # STRICT VALIDATION: Ensure all required intelligence fields are present
-        if data and (isinstance(data, dict) or hasattr(data, '__dict__')):
+        if data and isinstance(data, dict):
             # Convert to dict for easier validation
-            data_dict = data if isinstance(data, dict) else data.__dict__
+            data_dict = data
             
-            # AMOUNT VALIDATION: remove unrealistic amounts before final output
+            # AMOUNT VALIDATION: preserve realistic amounts, remove only clearly invalid ones
             structured_data = data_dict.get("structured_data", {})
             amount_fields = ["requested_amount", "claim_amount", "subsidy_amount", "amount"]
             invalid_amount_removed = False
@@ -790,49 +1055,51 @@ class DocumentProcessingService:
                         clean = re.sub(r"[^0-9.]", "", clean)
                         if clean:
                             amount_num = float(clean)
-                            if amount_num > 10000000 or amount_num < 100:
-                                # Remove invalid amount from both structured_data and extracted_data
+                            # PART 7: Enhanced amount preservation - only remove clearly unrealistic values
+                            # Preserve small valid amounts (75, 8500, 11200)
+                            # Only remove: < 1, > 10 million, or obvious junk
+                            if amount_num < 1 or amount_num > 10000000:
+                                # Additional check: if it's a small integer, it might be valid
+                                if amount_num < 1 and raw_val.isdigit() and len(str(raw_val)) <= 5:
+                                    # Keep small integers like "75", "850" as they could be valid amounts
+                                    logger.info(f"[AMOUNT] Preserving small integer amount: {raw_val}")
+                                    continue
+                                
+                                # Remove invalid amount from structured_data
                                 del structured_data[amt_field]
-                                if isinstance(data, dict):
-                                    data["structured_data"] = structured_data
-                                else:
-                                    data.structured_data = structured_data
-                                if extracted_data.get("structured_data") and amt_field in extracted_data["structured_data"]:
-                                    del extracted_data["structured_data"][amt_field]
+                                data["structured_data"] = structured_data
                                 invalid_amount_removed = True
-                    except Exception:
-                        # If parsing fails, do not hallucinate or remove
-                        pass
+                                logger.info(f"[AMOUNT] Removed invalid amount: {raw_val} (parsed as {amount_num})")
+                            else:
+                                # Valid amount - ensure proper formatting
+                                structured_data[amt_field] = amount_num
+                                logger.info(f"[AMOUNT] Preserved valid amount: {raw_val} -> {amount_num}")
+                    except Exception as e:
+                        # If parsing fails, check if it's a simple integer
+                        if str(raw_val).isdigit() and len(str(raw_val)) <= 5:
+                            logger.info(f"[AMOUNT] Preserving unparsed integer: {raw_val}")
+                        else:
+                            logger.warning(f"[AMOUNT] Could not parse amount: {raw_val} - {e}")
+                            # Don't remove unparsable amounts that might be valid text
 
             if invalid_amount_removed:
                 # Add explicit reasoning about removed invalid amount(s)
-                extracted_data.setdefault("reasoning", [])
-                extracted_data["reasoning"].append("Invalid amount removed")
-                if isinstance(data, dict):
-                    data.setdefault("reasoning", [])
-                    data["reasoning"].append("Invalid amount removed")
-                else:
-                    if not getattr(data, "reasoning", None):
-                        data.reasoning = []
-                    data.reasoning.append("Invalid amount removed")
+                data.setdefault("reasoning", [])
+                data["reasoning"].append("Invalid amount removed")
 
             # DYNAMIC SCORE: compute score from confidence and missing fields
             try:
-                doc_type_for_score = data_dict.get("document_type") or extracted_data.get("document_type", "unknown")
+                doc_type_for_score = data_dict.get("document_type", "unknown")
                 required_fields_list = self.extraction_service._compute_missing_fields(doc_type_for_score, {})
                 required_count = len(required_fields_list) if required_fields_list is not None else 0
-                missing_count = len(extracted_data.get("missing_fields", []))
-                confidence_val = extracted_data.get("confidence", extracted_data.get("extraction_confidence", 0.0)) or 0.0
+                missing_count = len(data_dict.get("missing_fields", []))
+                confidence_val = data_dict.get("confidence", data_dict.get("extraction_confidence", 0.0)) or 0.0
                 missing_ratio = missing_count / max(required_count, 1)
                 score_val = confidence_val * (1 - missing_ratio)
                 # Clamp score between 0 and 1
                 score_val = max(0.0, min(1.0, score_val))
-                # Persist score in both extracted_data and output data
-                extracted_data["score"] = score_val
-                if isinstance(data, dict):
-                    data["score"] = score_val
-                else:
-                    setattr(data, "score", score_val)
+                # Persist score
+                data["score"] = score_val
             except Exception:
                 pass
 
@@ -860,7 +1127,7 @@ class DocumentProcessingService:
                         clean_amt_digits = re.sub(r"[^0-9.]", "", clean_amt)
                         if clean_amt_digits:
                             amt_num = float(clean_amt_digits)
-                            if amt_num >= 100:
+                            if amt_num >= 1:
                                 if amt_num >= 100000:
                                     formatted = f"₹{int(amt_num):,}"
                                 else:
@@ -882,26 +1149,19 @@ class DocumentProcessingService:
                 if key_parts:
                     fixed_summary += f" Key details include {', '.join(key_parts)}."
 
-                if isinstance(data, dict):
-                    data["summary"] = fixed_summary
-                    data["ai_summary"] = fixed_summary
-                else:
-                    data.summary = fixed_summary
-                    data.ai_summary = fixed_summary
+                data["summary"] = fixed_summary
+                data["ai_summary"] = fixed_summary
             
             # Validate decision exists
             decision = data_dict.get("decision")
-            if not decision or decision not in ["approve", "review", "reject"]:
+            if not decision or decision not in ["approve", "review", "reject", "manual_review"]:
                 # Auto-fix with conservative decision
-                if isinstance(data, dict):
-                    data["decision"] = "review"
-                else:
-                    data.decision = "review"
+                data["decision"] = "review"
             
             # Validate ml_insights exists
             ml_insights = data_dict.get("ml_insights")
             if not ml_insights or not isinstance(ml_insights, dict):
-                print(f"DEBUG: ml_insights validation failed, using fallback")
+                logger.warning("[ML] ml_insights validation failed, using fallback")
                 # Auto-fix with fallback ML insights using real deterministic method
                 ml_prediction = predict_application_priority(data_dict)
                 fallback_ml = {
@@ -917,43 +1177,24 @@ class DocumentProcessingService:
                     "approval_likelihood": "50%",
                     "risk_level": "Medium"
                 })
-                if isinstance(data, dict):
-                    data["ml_insights"] = fallback_ml
-                    data["predictions"] = fallback_ml  # Also update predictions!
-                else:
-                    data.ml_insights = fallback_ml
-                    data.predictions = fallback_ml  # Also update predictions!
+                data["ml_insights"] = fallback_ml
+                data["predictions"] = fallback_ml  # Also update predictions!
             else:
-                print(f"DEBUG: ml_insights validation passed, keeping existing")
+                logger.info("[ML] ml_insights validation passed, keeping existing")
                 # Ensure predictions field matches ml_insights prediction_method
-                if isinstance(data, dict):
-                    data["predictions"] = {
-                        "priority_score": ml_insights.get("priority_score", 0.5),
-                        "queue": ml_insights.get("queue", "NORMAL"),
-                        "review_type": ml_insights.get("review_type", "AUTO"),
-                        "model_confidence": ml_insights.get("model_confidence", 0.5),
-                        "prediction_method": ml_insights.get("prediction_method", "trained_random_forest")
-                    }
-                    # Add generic predictions for non-ML fields
-                    data["predictions"].update({
-                        "processing_time": ml_insights.get("processing_time", "2 days"),
-                        "approval_likelihood": ml_insights.get("approval_likelihood", "50%"),
-                        "risk_level": ml_insights.get("risk_level", "Medium")
-                    })
-                else:
-                    data.predictions = {
-                        "priority_score": ml_insights.priority_score,
-                        "queue": ml_insights.queue,
-                        "review_type": ml_insights.review_type,
-                        "model_confidence": ml_insights.model_confidence,
-                        "prediction_method": ml_insights.prediction_method
-                    }
-                    # Add generic predictions for non-ML fields
-                    data.predictions.update({
-                        "processing_time": ml_insights.processing_time,
-                        "approval_likelihood": ml_insights.approval_likelihood,
-                        "risk_level": ml_insights.risk_level
-                    })
+                data["predictions"] = {
+                    "priority_score": ml_insights.get("priority_score", 0.5),
+                    "queue": ml_insights.get("queue", "NORMAL"),
+                    "review_type": ml_insights.get("review_type", "AUTO"),
+                    "model_confidence": ml_insights.get("model_confidence", 0.5),
+                    "prediction_method": ml_insights.get("prediction_method", "trained_random_forest")
+                }
+                # Add generic predictions for non-ML fields
+                data["predictions"].update({
+                    "processing_time": ml_insights.get("processing_time", "2 days"),
+                    "approval_likelihood": ml_insights.get("approval_likelihood", "50%"),
+                    "risk_level": ml_insights.get("risk_level", "Medium")
+                })
             
             # Validate case_insight has at least 3 useful lines
             case_insight = data_dict.get("case_insight", [])
@@ -969,24 +1210,16 @@ class DocumentProcessingService:
                     "Status: Requires review"
                 ]
                 
-                if isinstance(data, dict):
-                    data["case_insight"] = fixed_insight
-                else:
-                    data.case_insight = fixed_insight
+                data["case_insight"] = fixed_insight
             
             # WORKFLOW INTEGRATION: Add workflow information
             try:
                 workflow_summary = self.workflow_service.get_workflow_summary(data_dict)
-                if isinstance(data, dict):
-                    data["workflow"] = workflow_summary["workflow"]
-                    data["next_steps"] = workflow_summary["next_steps"]
-                    data["sla_timeline"] = workflow_summary["sla_timeline"]
-                else:
-                    data.workflow = workflow_summary["workflow"]
-                    data.next_steps = workflow_summary["next_steps"]
-                    data.sla_timeline = workflow_summary["sla_timeline"]
+                data["workflow"] = workflow_summary["workflow"]
+                data["next_steps"] = workflow_summary["next_steps"]
+                data["sla_timeline"] = workflow_summary["sla_timeline"]
             except Exception as e:
-                print(f"DEBUG: Workflow integration failed: {e}")
+                logger.warning(f"[WORKFLOW] Workflow integration failed: {e}")
                 # Add fallback workflow
                 fallback_workflow = {
                     "status": "PENDING_REVIEW",
@@ -995,246 +1228,9 @@ class DocumentProcessingService:
                     "requires_manual_review": True,
                     "risk_level": "Medium"
                 }
-                if isinstance(data, dict):
-                    data["workflow"] = fallback_workflow
-                    data["next_steps"] = ["Standard processing", "Review required"]
-                    data["sla_timeline"] = {"initial_review": "3-5 business days", "final_decision": "7-10 business days"}
-                else:
-                    data.workflow = fallback_workflow
-                    data.next_steps = ["Standard processing", "Review required"]
-                    data.sla_timeline = {"initial_review": "3-5 business days", "final_decision": "7-10 business days"}
-
-        return DocumentProcessingResult(
-            request_id=processing_result.get("request_id", ""),
-            success=processing_result.get("success", False),
-            processing_time_ms=processing_result.get("processing_time_ms", 0),
-            processing_type=processing_result.get("processing_type", ""),
-            filename=processing_result.get("filename", ""),
-            data=data,
-            metadata=processing_result.get("metadata", {}),
-            error_message=processing_result.get("error_message")
-        )
-    
-    def _fallback_ml_priority(self, extracted_data: Dict[str, Any], data: Any, decision_support: Dict[str, Any], ml_prediction: Dict[str, Any] = None):
-        """Deterministic priority routing based on document facts, not generic fallback"""
-        
-        # Extract key facts from document
-        document_type = extracted_data.get("document_type", "unknown")
-        missing_fields = extracted_data.get("missing_fields", [])
-        risk_flags = extracted_data.get("risk_flags", [])
-        classification_confidence = extracted_data.get("classification_confidence", 0.5)
-        extraction_confidence = extracted_data.get("extraction_confidence", 0.5)
-        structured_data = extracted_data.get("structured_data", {})
-        
-        # Deterministic routing based on document facts
-        # Base priority now derived dynamically from extraction confidence and completeness
-        try:
-            required_fields_list = self.extraction_service._compute_missing_fields(document_type, {})
-            required_count = len(required_fields_list) if required_fields_list is not None else 0
-            missing_count_local = len(missing_fields or [])
-            base_score = extraction_confidence * (1 - (missing_count_local / max(required_count, 1)))
-            base_score = max(0.0, min(1.0, base_score))
-        except Exception:
-            base_score = 0.5
-
-        priority_score = base_score  # Base score (0..1 scale)
-        # Persist computed score for downstream use
-        try:
-            extracted_data["score"] = base_score
-            if isinstance(data, dict):
-                data["score"] = base_score
-            else:
-                setattr(data, "score", base_score)
-        except Exception:
-            pass
-        # Ensure ml_prediction is a dict for safe .get calls
-        ml_prediction = self._safe_dict(ml_prediction)
-
-        queue = "NORMAL"
-        risk_level = "medium"
-        review_type = "AUTO"
-        
-        # Document-type specific routing
-        if document_type == "grievance":
-            # Grievances get higher urgency
-            priority_score += 0.3
-            queue = "HIGH_PRIORITY" if classification_confidence > 0.7 else "NORMAL"
-            risk_level = "high" if len(missing_fields) > 2 else "medium"
-            
-        elif document_type == "supporting_document":
-            # Supporting documents get lower priority unless problematic
-            priority_score -= 0.2
-            queue = "LOW" if len(missing_fields) <= 1 else "NORMAL"
-            risk_level = "low" if len(risk_flags) == 0 else "medium"
-            
-        elif document_type == "scheme_application":
-            # Scheme apps based on completeness
-            if len(missing_fields) == 0 and classification_confidence > 0.8:
-                priority_score += 0.2
-                queue = "LOW"
-                risk_level = "low"
-            elif len(missing_fields) > 3:
-                priority_score -= 0.1
-                queue = "NORMAL"
-                risk_level = "medium"
-            else:
-                queue = "NORMAL"
-                risk_level = "medium"
-                
-        elif document_type == "subsidy_claim":
-            # Subsidy claims need financial validation
-            amount_fields = ["requested_amount", "claim_amount", "subsidy_amount"]
-            has_amount = any(field in structured_data for field in amount_fields)
-            
-            if has_amount and len(missing_fields) <= 2:
-                priority_score += 0.1
-                queue = "NORMAL"
-                risk_level = "medium"
-            else:
-                priority_score -= 0.1
-                queue = "NORMAL"  # Still normal for review
-                risk_level = "high" if len(missing_fields) > 3 else "medium"
-                
-        elif document_type == "insurance_claim":
-            # Insurance claims get higher review sensitivity
-            priority_score += 0.1
-            queue = "NORMAL"
-            risk_level = "high" if len(missing_fields) > 2 else "medium"
-            
-        elif document_type == "farmer_record":
-            # Farmer records are lower priority unless incomplete
-            if len(missing_fields) > 4:
-                priority_score -= 0.2
-                queue = "LOW"
-                risk_level = "medium"
-            else:
-                queue = "LOW"
-                risk_level = "low"
-        
-        # Confidence-based adjustments
-        if classification_confidence > 0.8:
-            priority_score += 0.1
-        elif classification_confidence < 0.5:
-            priority_score -= 0.2
-            queue = "NORMAL"  # At least normal review for low confidence
-            risk_level = "high"
-            
-        # Missing fields impact
-        if len(missing_fields) == 0:
-            priority_score += 0.1
-        elif len(missing_fields) > 5:
-            priority_score -= 0.3
-            queue = "LOW"
-            risk_level = "high"
-            review_type = "MANUAL_REVIEW"
-        elif len(missing_fields) > 3:
-            priority_score -= 0.1
-            risk_level = "high"
-            
-        # Risk flags impact
-        if len(risk_flags) > 2:
-            priority_score -= 0.2
-            queue = "LOW"
-            risk_level = "high"
-            review_type = "MANUAL_REVIEW"
-        elif len(risk_flags) > 0:
-            priority_score -= 0.1
-            risk_level = "medium"
-        
-        # Decision support alignment - be conservative about forcing manual review
-        decision_value = decision_support.get("decision") if isinstance(decision_support, dict) else None
-        if decision_value == "reject":
-            review_type = "MANUAL_REVIEW"
-            queue = "LOW"
-            risk_level = "high"
-        elif decision_value == "review":
-            # Escalate to manual review only when evidence warrants it
-            if len(missing_fields) > 3 or len(risk_flags) > 1 or classification_confidence < 0.5:
-                review_type = "MANUAL_REVIEW"
-                queue = "NORMAL"
-            else:
-                review_type = "AUTO"
-        
-        # Clamp priority score to 0-100 range
-        priority_score = max(0, min(100, priority_score * 100))
-        
-        # Override with ML prediction if available and confident
-        if ml_prediction and ml_prediction.get("model_confidence", 0) > 0.7:
-            priority_score = ml_prediction.get("priority_score", priority_score)
-            queue = ml_prediction.get("queue", queue)
-            risk_level = ml_prediction.get("risk_level", risk_level).lower()
-        
-        # Ensure deterministic queue mapping
-        if queue not in ["LOW", "NORMAL", "HIGH_PRIORITY"]:
-            queue = "NORMAL"
-            
-        # Ensure risk level consistency
-        if risk_level not in ["low", "medium", "high"]:
-            risk_level = "medium"
-        
-        # Ensure ML prediction has required fields
-        ml_insights = {
-            "priority_score": float(priority_score),
-            "queue": queue,
-            "review_type": review_type,
-            "risk_level": risk_level,
-            "processing_time": ml_prediction.get("processing_time", "2 days"),
-            "approval_likelihood": ml_prediction.get("approval_likelihood", "50%"),
-            "model_confidence": ml_prediction.get("model_confidence", 0.5),
-            "prediction_method": ml_prediction.get("prediction_method", "rule_based_fallback")
-        }
-        
-        extracted_data["ml_insights"] = ml_insights
-        
-        # Also add ML insights to main data object
-        if isinstance(data, dict):
-            data["ml_insights"] = ml_insights
-        else:
-            data.ml_insights = ml_insights
-        
-        # Update predictions with actual deterministic results, not generic fallback
-        ml_predictions = {
-            "priority_score": priority_score / 100.0,  # Convert back to 0-1 for consistency
-            "queue": queue,
-            "review_type": review_type,
-            "risk_level": risk_level.capitalize(),  # Capitalize for UI consistency
-            "model_confidence": 0.8,  # High confidence for rule-based
-            "prediction_method": "deterministic_fallback"
-        }
-        
-        # Add document-specific predictions instead of generic ones
-        processing_days = 2
-        if document_type == "grievance":
-            processing_days = 1  # Faster for grievances
-        elif document_type == "supporting_document":
-            processing_days = 3  # Slower for supporting docs
-        elif len(missing_fields) > 3:
-            processing_days = 4  # Slower for incomplete docs
-        
-        # Calculate approval likelihood based on completeness and risk
-        approval_likelihood = 50  # Base percentage
-        if len(missing_fields) == 0 and risk_level == "low":
-            approval_likelihood = 85
-        elif len(missing_fields) <= 2 and risk_level == "medium":
-            approval_likelihood = 65
-        elif risk_level == "high" or len(missing_fields) > 5:
-            approval_likelihood = 25
-        
-        ml_predictions.update({
-            "processing_time": f"{processing_days} days",
-            "approval_likelihood": f"{approval_likelihood}%",
-            "risk_level": risk_level.capitalize()
-        })
-        
-        # Update both extracted_data and main data with ML predictions
-        extracted_data["predictions"] = ml_predictions
-        if isinstance(data, dict):
-            data["predictions"] = ml_predictions
-        else:
-            data.predictions = ml_predictions
-
-        # AUTHORITATIVE FINAL EVALUATION - Ensure consistency across all fields
-        self._authoritative_final_evaluation(extracted_data, data)
+                data["workflow"] = fallback_workflow
+                data["next_steps"] = ["Standard processing", "Review required"]
+                data["sla_timeline"] = {"initial_review": "3-5 business days", "final_decision": "7-10 business days"}
 
     def _authoritative_final_evaluation(self, extracted_data: Dict[str, Any], data: Any):
         """Single authoritative evaluation to ensure missing_fields, risk_flags, and reasoning are consistent"""
@@ -1253,83 +1249,82 @@ class DocumentProcessingService:
             'unknown': []
         }
         
+        # Get required fields for this document type
         required_fields = required_fields_map.get(document_type, [])
         
-        # Authoritative missing fields evaluation
-        authoritative_missing = []
+        # Compute missing fields
+        missing_fields = []
         for field in required_fields:
-            field_value = structured_data.get(field)
-            if not field_value or (isinstance(field_value, str) and not field_value.strip()):
-                authoritative_missing.append(field)
+            if not structured_data.get(field):
+                missing_fields.append(field)
         
-        # Authoritative risk flags based on final missing fields
-        authoritative_risk_flags = []
+        # Update missing fields in extracted data
+        extracted_data["missing_fields"] = missing_fields
         
-        # Add risk flags for missing required fields
-        for missing_field in authoritative_missing:
-            if document_type in ['scheme_application', 'subsidy_claim', 'insurance_claim'] and missing_field in ['farmer_name', 'scheme_name', 'subsidy_type', 'claim_type']:
-                authoritative_risk_flags.append({
-                    "code": f"missing_{missing_field}",
-                    "severity": "high",
-                    "message": f"Critical field {missing_field} is missing for {document_type}"
-                })
-            else:
-                authoritative_risk_flags.append({
-                    "code": f"missing_{missing_field}",
-                    "severity": "medium",
-                    "message": f"Required field {missing_field} is missing"
-                })
+        # Compute confidence based on missing fields
+        confidence = 1.0
+        if required_fields:
+            present_fields = len([f for f in required_fields if structured_data.get(f)])
+            confidence = present_fields / len(required_fields)
         
-        # Add document-specific risk flags
-        classification_confidence = extracted_data.get("classification_confidence", 0.5)
-        if classification_confidence < 0.5:
-            authoritative_risk_flags.append({
-                "code": "low_classification_confidence",
-                "severity": "medium",
-                "message": "Document classification confidence is low"
-            })
+        extracted_data["confidence"] = confidence
         
-        # Authoritative reasoning
-        authoritative_reasoning = []
+        # PART 5: Authoritative verification routing based on actual conditions
+        decision_support = extracted_data.get("decision_support", {})
+        ml_insights = extracted_data.get("ml_insights", {})
         
-        if authoritative_missing:
-            authoritative_reasoning.append(f"Missing required fields: {', '.join(authoritative_missing)}")
+        # Determine if verification is required based on comprehensive conditions
+        requires_verification = (
+            confidence < 0.7 or  # Low confidence
+            len(missing_fields) > 2 or  # Many missing fields
+            decision_support.get("decision") in ["manual_review", "review"] or  # Manual review required
+            ml_insights.get("auto_decision") == "manual_review" or  # ML says manual review
+            ml_insights.get("risk_level") == "high" or  # High risk
+            extracted_data.get("document_type") == "supporting_document" or  # Supporting documents need review
+            len(extracted_data.get("risk_flags", [])) > 2 or  # Many risk flags
+            confidence < 0.5  # Very low confidence threshold
+        )
         
-        # Add extraction success reasoning
-        extracted_fields_count = len([k for k, v in structured_data.items() if v and str(v).strip()])
-        if extracted_fields_count > 0:
-            field_names = [k for k, v in structured_data.items() if v and str(v).strip()]
-            authoritative_reasoning.append(f"Fields extracted: {', '.join(field_names)}")
-        
-        # Update all data structures with authoritative results
-        extracted_data["missing_fields"] = authoritative_missing
-        extracted_data["risk_flags"] = authoritative_risk_flags
-        extracted_data["reasoning"] = authoritative_reasoning
-        
-        # Update canonical verification section
-        if "canonical" not in extracted_data:
-            extracted_data["canonical"] = {}
-        extracted_data["canonical"]["verification"] = {
-            "missing_fields": authoritative_missing,
-            "risk_flags": authoritative_risk_flags,
-            "completeness_score": max(0, 100 - (len(authoritative_missing) * 20))
-        }
-        
-        # Update main data object
-        if isinstance(data, dict):
-            data["missing_fields"] = authoritative_missing
-            data["risk_flags"] = authoritative_risk_flags
-            data["reasoning"] = authoritative_reasoning
-            if "canonical" not in data:
-                data["canonical"] = {}
-            data["canonical"]["verification"] = extracted_data["canonical"]["verification"]
+        # Set queue and workflow based on verification requirement
+        if requires_verification:
+            queue = "VERIFICATION_QUEUE"
+            workflow_status = "UNDER_REVIEW"
         else:
-            data.missing_fields = authoritative_missing
-            data.risk_flags = authoritative_risk_flags
-            data.reasoning = authoritative_reasoning
-            if not hasattr(data, 'canonical') or data.canonical is None:
-                data.canonical = {}
-            data.canonical["verification"] = extracted_data["canonical"]["verification"]
+            # Use ML queue suggestion but ensure safe defaults
+            ml_queue = ml_insights.get("queue", "NORMAL")
+            if ml_queue in ["HIGH", "NORMAL", "LOW"]:
+                queue = ml_queue
+            else:
+                queue = "NORMAL"  # Safe default
+            workflow_status = "CASE_READY"
+        
+        # Update workflow information
+        workflow = extracted_data.get("workflow", {})
+        workflow["queue"] = queue
+        workflow["status"] = workflow_status
+        workflow["requires_manual_review"] = requires_verification
+        
+        extracted_data["workflow"] = workflow
+        
+        # Add routing reasoning to extracted data for transparency
+        routing_reasons = []
+        if confidence < 0.7:
+            routing_reasons.append(f"Low confidence ({confidence:.2f})")
+        if len(missing_fields) > 2:
+            routing_reasons.append(f"Many missing fields ({len(missing_fields)})")
+        if decision_support.get("decision") in ["manual_review", "review"]:
+            routing_reasons.append(f"Decision support requires {decision_support.get('decision')}")
+        if ml_insights.get("auto_decision") == "manual_review":
+            routing_reasons.append("ML recommends manual review")
+        if ml_insights.get("risk_level") == "high":
+            routing_reasons.append("High risk level detected")
+        if extracted_data.get("document_type") == "supporting_document":
+            routing_reasons.append("Supporting document requires review")
+        
+        if routing_reasons:
+            extracted_data["routing_reasoning"] = routing_reasons
+
+    # --- Text extraction methods ----------------------------------------------
 
     def _sanitize_supporting_document(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1415,35 +1410,41 @@ class DocumentProcessingService:
     
     def _extract_text_from_file(self, file_content: bytes, filename: str) -> str:
         """
-        Extract text from downloaded file based on file type
+        Unified text extraction from file based on type
+        Supports: PDF, Images (JPG/PNG), DOCX, DOC, TXT
         
         Args:
             file_content: Raw file bytes
             filename: Original filename for type detection
             
         Returns:
-            Extracted text content
+            Clean extracted text (never null)
         """
         import logging
         logger = logging.getLogger(__name__)
         
         # Detect file type from filename
         file_extension = filename.lower().split('.')[-1] if '.' in filename.lower() else ''
-        logger.info(f"[DOC OCR] detected file type: {file_extension}")
+        logger.info(f"[EXTRACT] File type detected: {file_extension}")
         
         try:
             if file_extension == 'pdf':
-                return self._extract_text_from_pdf(file_content)
+                return self._extract_text_from_pdf(file_content).strip()
             elif file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp']:
-                return self._extract_text_from_image(file_content)
+                return self._extract_text_from_image(file_content).strip()
+            elif file_extension == 'docx':
+                return self._extract_text_from_docx(file_content).strip()
+            elif file_extension == 'doc':
+                return self._extract_text_from_doc(file_content).strip()
             elif file_extension in ['txt', 'text']:
-                return self._extract_text_from_text_file(file_content)
+                return self._extract_text_from_text_file(file_content).strip()
             else:
-                logger.warning(f"[DOC OCR] unsupported file type: {file_extension}")
+                logger.warning(f"[EXTRACT] Unsupported file type: {file_extension}")
                 return ""
         except Exception as e:
-            logger.error(f"[DOC OCR] extraction error for {file_extension}: {e}")
-            raise
+            logger.error(f"[EXTRACT] Extraction error for {file_extension}: {e}")
+            # Return empty string instead of raising to prevent pipeline failure
+            return ""
     
     def _extract_text_from_pdf(self, file_content: bytes) -> str:
         """Extract text from PDF bytes using pdfplumber"""
@@ -1492,6 +1493,82 @@ class DocumentProcessingService:
                 logger.error(f"[DOC OCR] PyMuPDF fallback also failed: {fallback_error}")
                 raise
     
+    def _extract_text_from_docx(self, file_content: bytes) -> str:
+        """Extract text from DOCX bytes using python-docx"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            import docx
+            import io
+            
+            # Create a temporary file-like object from bytes
+            docx_file = io.BytesIO(file_content)
+            
+            # Open the document
+            doc = docx.Document(docx_file)
+            
+            # Extract text from all paragraphs
+            text_parts = []
+            for paragraph in doc.paragraphs:
+                if paragraph.text and paragraph.text.strip():
+                    text_parts.append(paragraph.text.strip())
+            
+            # Extract text from tables as well
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = []
+                    for cell in row.cells:
+                        if cell.text and cell.text.strip():
+                            row_text.append(cell.text.strip())
+                    if row_text:
+                        text_parts.append(" | ".join(row_text))
+            
+            extracted_text = "\n".join(text_parts)
+            logger.info(f"[EXTRACT] DOCX extraction complete: {len(extracted_text)} chars")
+            return extracted_text
+            
+        except ImportError:
+            logger.error("[EXTRACT] python-docx not installed, cannot extract from DOCX")
+            return ""
+        except Exception as e:
+            logger.error(f"[EXTRACT] DOCX extraction failed: {e}")
+            return ""
+    
+    def _extract_text_from_doc(self, file_content: bytes) -> str:
+        """Extract text from DOC bytes using textract"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            import textract
+            import tempfile
+            import os
+            
+            # Create a temporary file
+            with tempfile.NamedTemporaryFile(suffix='.doc', delete=False) as temp_file:
+                temp_file.write(file_content)
+                temp_file_path = temp_file.name
+            
+            try:
+                # Extract text using textract
+                extracted_text = textract.process(temp_file_path).decode('utf-8')
+                logger.info(f"[EXTRACT] DOC extraction complete: {len(extracted_text)} chars")
+                return extracted_text.strip()
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_file_path)
+                except OSError:
+                    pass
+            
+        except ImportError:
+            logger.error("[EXTRACT] textract not installed, cannot extract from DOC")
+            return ""
+        except Exception as e:
+            logger.error(f"[EXTRACT] DOC extraction failed: {e}")
+            return ""
+
     def _extract_text_from_image(self, file_content: bytes) -> str:
         """Extract text from image bytes using OCR"""
         import logging
@@ -1501,14 +1578,91 @@ class DocumentProcessingService:
             import PIL.Image
             import pytesseract
             import io
+            import os
+            
+            # Configure tesseract path for Railway production environment
+            # Railway installs tesseract via nixpkgs to /nix/store/...
+            # We'll try multiple common locations
+            tesseract_paths = [
+                "/nix/store",  # Nix store base - pytesseract will find it in PATH
+                "/usr/bin/tesseract",  # Standard location
+                "/usr/local/bin/tesseract",  # Common location
+            ]
+            
+            # Check if tesseract is available in PATH or set explicit path
+            try:
+                # Test if tesseract is available
+                pytesseract.get_tesseract_version()
+                logger.info("[DOC OCR] Tesseract found in PATH")
+            except Exception as path_error:
+                # Try to find tesseract in common locations
+                tesseract_found = False
+                for base_path in tesseract_paths:
+                    if base_path == "/nix/store":
+                        # For nix store, we need to find the actual tesseract binary
+                        try:
+                            import subprocess
+                            result = subprocess.run(['which', 'tesseract'], capture_output=True, text=True)
+                            if result.returncode == 0:
+                                tesseract_path = result.stdout.strip()
+                                pytesseract.pytesseract.tesseract_cmd = tesseract_path
+                                logger.info(f"[DOC OCR] Found tesseract via which: {tesseract_path}")
+                                tesseract_found = True
+                                break
+                        except Exception:
+                            continue
+                    else:
+                        if os.path.exists(base_path):
+                            pytesseract.pytesseract.tesseract_cmd = base_path
+                            logger.info(f"[DOC OCR] Using tesseract at: {base_path}")
+                            tesseract_found = True
+                            break
+                
+                if not tesseract_found:
+                    # Last resort: let pytesseract try with default
+                    logger.warning("[DOC OCR] Tesseract not found in standard locations, trying default")
             
             # Open image from bytes
             image = PIL.Image.open(io.BytesIO(file_content))
             
-            # Perform OCR
-            extracted_text = pytesseract.image_to_string(image)
+            # Convert to RGB if necessary (tesseract works best with RGB)
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+                logger.debug("[DOC OCR] Converted image to RGB mode")
             
-            logger.info(f"[DOC OCR] Image OCR extraction complete: {len(extracted_text)} chars")
+            # Perform OCR with optimized settings for better accuracy
+            custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.,/-:()&@%₹$ "'
+            extracted_text = pytesseract.image_to_string(image, config=custom_config)
+            
+            # PART 8: Enhanced handwritten/low OCR safety
+            text_length = len(extracted_text.strip())
+            
+            # Check for completely empty extraction
+            if text_length == 0:
+                logger.error(f"[DOC OCR] No text extracted from image {filename} - may be unreadable or handwritten")
+                raise ValueError("No text could be extracted from image - document may be handwritten or corrupted")
+            
+            # Check for very low extraction (potential handwritten)
+            elif text_length < 20:
+                logger.warning(f"[DOC OCR] Very low text extraction from image {filename}: {text_length} chars - possible handwritten document")
+                # Add OCR quality warning to the text for downstream processing
+                extracted_text = f"[LOW_OCR_QUALITY] {extracted_text.strip()}"
+                logger.warning(f"[DOC OCR] Added low OCR quality warning for downstream processing")
+            
+            # Check for common OCR error patterns that indicate handwriting
+            ocr_error_patterns = [
+                "|||||||", "||||||", "|||||", "||||",  # Vertical lines (common in handwritten forms)
+                "_____", "____", "___",  # Underlines
+                "[illegible]", "[unreadable]", "[unclear]"  # Explicit illegibility markers
+            ]
+            
+            for pattern in ocr_error_patterns:
+                if pattern in extracted_text.lower():
+                    logger.warning(f"[DOC OCR] Detected handwriting pattern '{pattern}' in {filename}")
+                    extracted_text = f"[HANDWRITING_DETECTED] {extracted_text.strip()}"
+                    break
+            
+            logger.info(f"[DOC OCR] Image OCR extraction complete: {text_length} chars")
             return extracted_text.strip()
             
         except Exception as e:

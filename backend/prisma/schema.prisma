@@ -84,6 +84,7 @@ model Application {
   documents         Json              @map("documents")
   extractedData     Json?             @map("extracted_data")
   normalizedContentHash String?       @map("normalized_content_hash") @db.VarChar(64)
+  rawFileHash         String?       @map("raw_file_hash") @db.VarChar(64)
   aiSummary         String?           @map("ai_summary") @db.Text
   fraudRiskScore    Float?            @map("fraud_risk_score") @db.DoublePrecision
   fraudFlags        Json?             @map("fraud_flags")
@@ -116,7 +117,8 @@ model Application {
   @@index([parentApplicationId], map: "idx_applications_parent_application_id")
   @@index([versionNumber], map: "idx_applications_version_number")
   @@index([applicantId, type], map: "idx_applications_applicant_type")
-  @@index([normalizedContentHash, farmerId, type, status], map: "idx_applications_duplicate_check")
+  @@index([normalizedContentHash, rawFileHash, farmerId, type, status], map: "idx_applications_duplicate_check")
+  @@index([rawFileHash], map: "idx_applications_raw_file_hash")
   @@map("applications")
 }
 

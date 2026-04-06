@@ -6,6 +6,7 @@ import { Request, Response } from 'express'
 import { asyncHandler } from '../../middlewares/asyncHandler'
 import { applicationsService } from './applications.service'
 import { applicationsRepository } from './applications.repository'
+import { documentNormalizationService } from './documentNormalization.service'
 import { CreateApplicationInput, UpdateApplicationInput, ApplicationQuery } from './applications.types'
 import { supabase } from '../../config/supabase'
 import { validate as isUUID, v4 as uuidv4 } from 'uuid'
@@ -208,7 +209,7 @@ class ApplicationsController {
   })
 
   createApplicationWithFile = asyncHandler(async (req: Request, res: Response) => {
-    console.log('[UPLOAD] Starting FINAL file upload process');
+    console.log('[UPLOAD] Starting UNIFIED document ingestion pipeline');
     
     const file = req.file
     console.log('[UPLOAD] File received:', !!file);
@@ -260,78 +261,96 @@ class ApplicationsController {
     // Store the object path (not public URL) - AI orchestrator will download from storage
     const fileUrl = uploadData.path
 
-    // FINAL STRICT DUPLICATE DETECTION - Generate file hash
-    const fileHash = crypto.createHash('sha256').update(file.buffer).digest('hex')
-    console.log('[STRICT DUPLICATE] Generated file hash:', fileHash.substring(0, 16) + '...')
-    console.log('[STRICT DUPLICATE] Applicant ID:', applicantId)
-    console.log('[STRICT DUPLICATE] File name:', file.originalname)
-    console.log('[STRICT DUPLICATE] File size:', file.size)
+    // UNIFIED DOCUMENT NORMALIZATION
+    console.log('[NORMALIZATION] Starting document normalization');
+    const normalizedDocument = await documentNormalizationService.normalizeDocument({
+      fileBuffer: file.buffer,
+      fileName: file.originalname,
+      mimeType: file.mimetype,
+      fileUrl: fileUrl
+    });
 
-    console.log("[FLOW] Before duplicate check")
+    // Generate both file hash and content hash
+    const fileHash = documentNormalizationService.generateFileHash(file.buffer);
+    let contentHash: string | undefined;
 
-    // AUTHORITATIVE DUPLICATE CHECK - File hash based
-    const duplicateCheck = await applicationsService.checkStrictDuplicate({
+    // For lightweight pre-duplicate extraction, try to get basic structured data
+    let lightweightExtractedData: any = undefined;
+    
+    try {
+      // If we have normalized text, try basic field extraction for content signature
+      if (normalizedDocument.rawText && normalizedDocument.rawText.length > 50) {
+        // Generate content signature for cross-format duplicate detection
+        const contentSignature = documentNormalizationService.generateContentSignature(normalizedDocument);
+        contentHash = documentNormalizationService.generateContentHash(contentSignature);
+        
+        console.log('[UNIFIED DUPLICATE] Generated content signature and hash');
+      }
+    } catch (error) {
+      console.warn('[UNIFIED DUPLICATE] Content signature generation failed, using file hash only:', error);
+    }
+
+    console.log('[UNIFIED DUPLICATE] File hash:', fileHash.substring(0, 16) + '...');
+    if (contentHash) {
+      console.log('[UNIFIED DUPLICATE] Content hash:', contentHash.substring(0, 16) + '...');
+    }
+
+    // UNIFIED CROSS-FORMAT DUPLICATE DETECTION
+    console.log('[UNIFIED DUPLICATE] Starting cross-format duplicate check');
+    const duplicateCheck = await applicationsService.checkUnifiedDuplicate({
       fileHash,
+      contentHash,
       fileName: file.originalname,
       fileSize: file.size,
-      applicantId
-    })
+      applicantId,
+      normalizedDocument,
+      extractedData: lightweightExtractedData
+    });
 
-    console.log("[FLOW] After duplicate check:", duplicateCheck)
-
-    console.log('[STRICT DUPLICATE] Final result:', {
+    console.log('[UNIFIED DUPLICATE] Duplicate check result:', {
       isDuplicate: duplicateCheck.isDuplicate,
       canResubmit: duplicateCheck.canResubmit,
-      existingApplicationId: duplicateCheck.existingApplicationId,
-      existingStatus: duplicateCheck.existingStatus,
-      blockReason: duplicateCheck.blockReason
-    })
-
-    console.log("[FLOW] Entering scenario decision")
+      duplicateType: duplicateCheck.duplicateType,
+      existingApplicationId: duplicateCheck.existingApplicationId
+    });
 
     // SCENARIO A: BLOCK ACTIVE DUPLICATE
     if (duplicateCheck.isDuplicate && !duplicateCheck.canResubmit) {
-      console.log("[FLOW] Scenario A triggered")
-      console.log('[STRICT DUPLICATE] BLOCKING - Active duplicate found:', {
-        existingApplicationId: duplicateCheck.existingApplicationId,
-        existingStatus: duplicateCheck.existingStatus,
-        blockReason: duplicateCheck.blockReason
-      })
-
+      console.log('[UNIFIED DUPLICATE] BLOCKING - Active duplicate found');
+      
       // Clean up uploaded file
       try {
-        await supabase.storage.from(bucket).remove([objectPath])
-        console.log('[STRICT DUPLICATE] Cleaned up uploaded file for blocked duplicate')
+        await supabase.storage.from(bucket).remove([objectPath]);
+        console.log('[UNIFIED DUPLICATE] Cleaned up uploaded file for blocked duplicate');
       } catch (cleanupError) {
-        console.warn('[STRICT DUPLICATE] Failed to clean up uploaded file:', cleanupError)
+        console.warn('[UNIFIED DUPLICATE] Failed to clean up uploaded file:', cleanupError);
       }
+
+      const blockMessage = duplicateCheck.duplicateType === 'same_content' 
+        ? 'This upload matches the content of an existing application of the same document type that is still active. Re-upload is only allowed if clarification or officer-requested changes were issued.'
+        : 'Duplicate document already under processing';
 
       return res.status(409).json({
         success: false,
         status: "duplicate_blocked",
         duplicateBlocked: true,
         isReupload: false,
+        duplicateType: duplicateCheck.duplicateType,
         existingApplicationId: duplicateCheck.existingApplicationId,
-        message: "Duplicate document already under processing"
-      })
+        message: blockMessage
+      });
     }
 
     // SCENARIO B: ALLOW RE-UPLOAD (completed duplicate)
     if (duplicateCheck.isDuplicate && duplicateCheck.canResubmit) {
-      console.log("[FLOW] Scenario B triggered")
-      console.log('[STRICT DUPLICATE] ALLOWING RE-UPLOAD:', {
-        existingApplicationId: duplicateCheck.existingApplicationId,
-        existingStatus: duplicateCheck.existingStatus
-      })
-
-      // Create new version as re-upload
-      const existingApplication = await applicationsService.getApplicationById(duplicateCheck.existingApplicationId!)
+      console.log('[UNIFIED DUPLICATE] ALLOWING RE-UPLOAD');
+      
+      const existingApplication = await applicationsService.getApplicationById(duplicateCheck.existingApplicationId!);
       if (!existingApplication) {
-        return res.status(404).json({ error: 'Existing application not found for re-upload' })
+        return res.status(404).json({ error: 'Existing application not found for re-upload' });
       }
 
-      // Calculate next version
-      const nextVersion = (existingApplication.versionNumber || 1) + 1
+      const nextVersion = (existingApplication.versionNumber || 1) + 1;
       
       const applicationData: CreateApplicationInput = {
         applicantId: applicantId,
@@ -347,11 +366,16 @@ class ApplicationsController {
         versionNumber: nextVersion,
         notes: `Re-upload version ${nextVersion} of application ${existingApplication.id}`,
         personalInfo: existingApplication.personalInfo
+      };
+
+      // Store content hash for cross-format detection
+      if (contentHash) {
+        (applicationData as any).normalizedContentHash = contentHash;
       }
 
       try {
-        const result = await applicationsService.createApplication(applicationData)
-        console.log('[RE-UPLOAD] New version created successfully:', result.application?.id)
+        const result = await applicationsService.createApplication(applicationData);
+        console.log('[RE-UPLOAD] New version created successfully:', result.application?.id);
         
         return res.status(201).json({
           success: true,
@@ -360,19 +384,18 @@ class ApplicationsController {
           parentApplicationId: existingApplication.id,
           application: result.application,
           message: "Previous application completed. Re-upload accepted as a new version."
-        })
+        });
       } catch (error) {
-        console.error('[RE-UPLOAD] Failed to create new version:', error)
+        console.error('[RE-UPLOAD] Failed to create new version:', error);
         return res.status(500).json({
           success: false,
           message: "Re-upload failed"
-        })
+        });
       }
     }
 
     // SCENARIO C: NORMAL NEW UPLOAD (no duplicate)
-    console.log('[STRICT DUPLICATE] Creating new application - no duplicate found');
-    console.log("[FLOW] Scenario C triggered")
+    console.log('[UNIFIED DUPLICATE] Creating new application - no duplicate found');
     
     const applicationData: CreateApplicationInput = {
       applicantId: applicantId,
@@ -382,7 +405,7 @@ class ApplicationsController {
       fileUrl: fileUrl,
       fileSize: file.size,
       fileType: file.mimetype,
-      fileHash: fileHash, // Store file hash for duplicate detection
+      fileHash: fileHash,
       personalInfo: {
         firstName: '', // DB-safe placeholder - AI processing will populate
         lastName: '',
@@ -405,14 +428,18 @@ class ApplicationsController {
         verificationStatus: 'pending' as const,
         version: 1
       }]
+    };
+
+    // Store content hash for cross-format detection
+    if (contentHash) {
+      (applicationData as any).normalizedContentHash = contentHash;
     }
 
     try {
-      console.log("[FLOW] Creating application now")
-      const result = await applicationsService.createApplication(applicationData)
-      console.log('[UPLOAD] Application created successfully:', result.application?.id);
+      console.log('[UNIFIED INGESTION] Creating application now');
+      const result = await applicationsService.createApplication(applicationData);
+      console.log('[UNIFIED INGESTION] Application created successfully:', result.application?.id);
       
-      // Normal creation - 201 Created
       return res.status(201).json({
         success: result.success,
         status: result.status,
@@ -421,7 +448,7 @@ class ApplicationsController {
         isReupload: false
       });
     } catch (error) {
-      console.error('[UPLOAD] Application creation failed:', error);
+      console.error('[UNIFIED INGESTION] Application creation failed:', error);
       return res.status(500).json({
         success: false,
         message: "Application creation failed"

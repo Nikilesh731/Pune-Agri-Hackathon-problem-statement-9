@@ -20,7 +20,7 @@ class DocumentProcessor:
         # Processing configuration
         self.min_confidence_threshold = 0.3
         self.max_processing_time_ms = 30000  # 30 seconds
-        self.supported_file_types = ['.pdf', '.jpg', '.jpeg', '.png', '.tiff', '.txt']
+        self.supported_file_types = ['.pdf', '.jpg', '.jpeg', '.png', '.tiff', '.txt', '.doc', '.docx']
     
     def process_document_workflow(
         self,

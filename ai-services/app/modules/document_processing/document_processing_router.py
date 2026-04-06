@@ -31,7 +31,7 @@ async def process_document(
     """
     try:
         # Validate file content type
-        if file.content_type and not file.content_type.startswith(('image/', 'application/pdf', 'text/')):
+        if file.content_type and not file.content_type.startswith(('image/', 'application/pdf', 'text/', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')):
             raise HTTPException(status_code=400, detail="Unsupported file type")
         
         file_content = await file.read()
@@ -118,7 +118,7 @@ async def process_documents_batch(
     for file in files:
         try:
             # Validate file content type
-            if file.content_type and not file.content_type.startswith(('image/', 'application/pdf', 'text/')):
+            if file.content_type and not file.content_type.startswith(('image/', 'application/pdf', 'text/', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')):
                 results.append(DocumentProcessingResult(
                     request_id="",
                     success=False,

@@ -64,8 +64,9 @@ export function ApplicationSections({ application }: ApplicationSectionsProps) {
     return !Object.keys(extractedFields).some(ek => ek.replace(/_/g, '').toLowerCase() === k && extractedFields[ek])
   })
 
-  // Officer summary: prefer backend aiSummary, fallback to decision support reasoning
+  // Officer summary: single source from backend summary field
   const summary =
+    application.extractedData?.summary ||
     application.aiSummary ||
     application.extractedData?.decision_support?.reasoning?.[0] ||
     "No summary available"

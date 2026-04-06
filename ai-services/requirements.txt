@@ -27,3 +27,7 @@ transformers==4.38.2
 # PDF and OCR processing
 pdfplumber==0.10.3
 PyMuPDF==1.23.26
+
+# Document processing for Word documents
+python-docx==1.1.0
+textract==1.6.5

@@ -8,7 +8,7 @@ export interface Application {
   applicantId: string
   schemeId: string
   type: string
-  status: 'UPLOADED' | 'PROCESSING' | 'PROCESSED' | 'NEEDS_REVIEW' | 'PENDING' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED' | 'REQUIRES_ACTION'
+  status: 'UPLOADED' | 'PROCESSING' | 'PROCESSED' | 'NEEDS_REVIEW' | 'PENDING' | 'UNDER_REVIEW' | 'CASE_READY' | 'APPROVED' | 'REJECTED' | 'REQUIRES_ACTION'
   priorityScore?: number
   fileName?: string
   fileUrl?: string
@@ -26,6 +26,7 @@ export interface Application {
   ocrProcessedAt?: Date
   aiProcessedAt?: Date
   rawExtractedText?: string
+  rawFileHash?: string
   normalizedContentHash?: string
   documentMetadata?: any
   farmerId?: string | null
@@ -71,7 +72,10 @@ export interface CreateApplicationInput {
   parentApplicationId?: string | null
   versionNumber?: number
   notes?: string
-  fileHash?: string // File hash for strict duplicate detection
+  fileHash?: string // Raw file hash for exact duplicate detection
+  rawFileHash?: string // Raw file hash (same as fileHash, explicit naming)
+  normalizedContentHash?: string // Content fingerprint for cross-format duplicate detection
+  extractedData?: ExtractedData // Pre-extracted data for content hash generation
 }
 
 export interface UpdateApplicationInput {
@@ -92,6 +96,8 @@ export interface UpdateApplicationInput {
   ocrProcessedAt?: Date
   aiProcessedAt?: Date
   rawExtractedText?: string
+  rawFileHash?: string
+  normalizedContentHash?: string
   documentMetadata?: any
   farmerId?: string | null
   caseId?: string | null

@@ -25,7 +25,8 @@ class ApplicationsRepository {
           personalInfo: applicationData.personalInfo || {} as any,
           farmInfo: applicationData.farmInfo || null as any,
           documents: applicationData.documents || [] as any,
-          normalizedContentHash: (applicationData as any).fileHash || null, // Map fileHash to normalizedContentHash
+          rawFileHash: (applicationData as any).rawFileHash || null,
+          normalizedContentHash: (applicationData as any).normalizedContentHash || null,
           versionNumber: applicationData.versionNumber || 1,
           parentApplicationId: applicationData.parentApplicationId || null
         }
@@ -42,7 +43,7 @@ class ApplicationsRepository {
    */
   async getApplications(query: ApplicationQuery): Promise<{ applications: Application[], total: number }> {
     try {
-      console.log('[ApplicationsRepository] fetching applications with query:', JSON.stringify(query, null, 2))
+      console.log('[ApplicationsRepository] fetching applications')
       
       const { page = 1, limit = 10, filters, sortBy = 'submissionDate', sortOrder = 'desc' } = query
       const offset = (page - 1) * limit
@@ -191,6 +192,9 @@ class ApplicationsRepository {
       if (updateData.parentApplicationId !== undefined) {
         updateFields.parentApplicationId = updateData.parentApplicationId
       }
+      if ((updateData as any).rawFileHash !== undefined) {
+        updateFields.rawFileHash = (updateData as any).rawFileHash
+      }
       if ((updateData as any).normalizedContentHash !== undefined) {
         updateFields.normalizedContentHash = (updateData as any).normalizedContentHash
       }
@@ -276,9 +280,7 @@ class ApplicationsRepository {
    * Map Prisma Application to Application object
    */
   private mapPrismaApplicationToApplication(prismaApp: any): Application {
-    console.log('[PIPELINE DEBUG] Repository mapper retrieval:')
-    console.log('  - Application ID:', prismaApp.id)
-    console.log('  - Raw extracted_data from DB:', prismaApp.extractedData)
+    // Repository mapper: Prisma to Application conversion
     
     if (prismaApp.extractedData?.canonical) {
       console.log('  - canonical.document_type from DB:', prismaApp.extractedData.canonical.document_type)
@@ -316,6 +318,7 @@ class ApplicationsRepository {
       ocrProcessedAt: prismaApp.ocrProcessedAt || undefined,
       aiProcessedAt: prismaApp.aiProcessedAt || undefined,
       rawExtractedText: prismaApp.rawExtractedText || undefined,
+      rawFileHash: prismaApp.rawFileHash || undefined,
       normalizedContentHash: prismaApp.normalizedContentHash || undefined,
       farmerId: prismaApp.farmerId || undefined,
       caseId: prismaApp.caseId || undefined,
@@ -330,9 +333,7 @@ class ApplicationsRepository {
       updatedAt: prismaApp.updatedAt
     }
     
-    console.log('[PIPELINE DEBUG] Repository mapper final result:')
-    console.log('  - extractedData.canonical.document_type:', mapped.extractedData?.canonical?.document_type)
-    console.log('  - extractedData.canonical.verification.classification_confidence:', mapped.extractedData?.canonical?.verification?.classification_confidence)
+    // Repository mapper: conversion complete
     
     return mapped
   }
@@ -650,34 +651,39 @@ class ApplicationsRepository {
   }
 
   /**
-   * Find applications by file hash for strict duplicate checking
+   * Find applications by raw file hash for exact duplicate checking
    */
-  async findApplicationsByFileHash(fileHash: string): Promise<Application[]> {
+  async findApplicationsByRawFileHash(rawFileHash: string): Promise<Application[]> {
     try {
-      console.log('[REPOSITORY] Searching for applications with file hash:', fileHash.substring(0, 16) + '...')
+      console.log('[REPOSITORY] Searching for applications with raw file hash:', rawFileHash.substring(0, 16) + '...')
       
       const applications = await prisma.application.findMany({
         where: {
-          normalizedContentHash: fileHash
+          rawFileHash: rawFileHash
         },
         orderBy: {
           createdAt: 'desc'
         }
       })
 
-      console.log('[REPOSITORY] Found applications:', applications.length)
-      applications.forEach(app => {
-        console.log('[REPOSITORY] Application:', {
-          id: app.id,
-          status: app.status,
-          fileName: app.fileName,
-          hasHash: !!app.normalizedContentHash
-        })
-      })
-
+      console.log('[REPOSITORY] Found applications by raw file hash:', applications.length)
       return applications.map(app => this.mapPrismaApplicationToApplication(app))
     } catch (error) {
-      console.error('[ApplicationsRepository] error finding applications by file hash:', error)
+      console.error('[ApplicationsRepository] error finding applications by raw file hash:', error)
+      throw new Error(`Failed to find applications by raw file hash: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  /**
+   * Find applications by file hash for strict duplicate checking (LEGACY - use rawFileHash)
+   * @deprecated Use findApplicationsByRawFileHash instead
+   */
+  async findApplicationsByFileHash(fileHash: string): Promise<Application[]> {
+    try {
+      console.log('[REPOSITORY] LEGACY findApplicationsByFileHash - redirecting to rawFileHash')
+      return this.findApplicationsByRawFileHash(fileHash)
+    } catch (error) {
+      console.error('[ApplicationsRepository] error in legacy file hash lookup:', error)
       throw new Error(`Failed to find applications by file hash: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
@@ -706,6 +712,39 @@ class ApplicationsRepository {
     } catch (error) {
       console.error('[ApplicationsRepository] error finding applications by filename and size:', error)
       throw new Error(`Failed to find applications by filename and size: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  /**
+   * Find applications by normalized content hash for cross-format duplicate detection
+   */
+  async findApplicationsByNormalizedContentHash(normalizedContentHash: string): Promise<Application[]> {
+    try {
+      console.log('[REPOSITORY] Searching for applications with normalized content hash:', normalizedContentHash.substring(0, 16) + '...')
+      
+      const applications = await prisma.application.findMany({
+        where: {
+          normalizedContentHash: normalizedContentHash
+        },
+        orderBy: {
+          createdAt: 'desc'
+        }
+      })
+
+      console.log('[REPOSITORY] Found applications by content hash:', applications.length)
+      applications.forEach(app => {
+        console.log('[REPOSITORY] Application:', {
+          id: app.id,
+          status: app.status,
+          fileName: app.fileName,
+          hasContentHash: !!app.normalizedContentHash
+        })
+      })
+
+      return applications.map(app => this.mapPrismaApplicationToApplication(app))
+    } catch (error) {
+      console.error('[ApplicationsRepository] error finding applications by normalized content hash:', error)
+      throw new Error(`Failed to find applications by normalized content hash: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 

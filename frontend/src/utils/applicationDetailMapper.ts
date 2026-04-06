@@ -142,8 +142,9 @@ export function mapApplicationToUI(app: any): MappedApplication {
       documents: Array.isArray(app.documents) ? app.documents : [],
       
       extractedData: (app.extractedData && typeof app.extractedData === 'object') ? app.extractedData : {},
-      aiSummary: app.extractedData?.ai_summary || app.aiSummary || '',
-      officerSummary: normalized.officerSummary || app.extractedData?.summary || app.extractedData?.ai_summary || app.extractedData?.llm_refinement?.refined_summary || 'Document processed. Review extracted details.',
+      // Single source of truth for summary
+      officerSummary: app.extractedData?.summary || app.extractedData?.ai_summary || app.extractedData?.llm_refinement?.refined_summary || 'Document processed. Review extracted details.',
+      aiSummary: app.extractedData?.summary || app.extractedData?.ai_summary || app.extractedData?.llm_refinement?.refined_summary || 'Document processed. Review extracted details.',
       aiProcessingStatus: app.aiProcessingStatus || "pending",
       
       createdAt: app.createdAt || null,
@@ -581,10 +582,8 @@ export function normalizeApplicationData(application: Application): NormalizedAp
     const fraudFlags = application.fraudFlags || application.extractedData?.risk_flags || []
 
     // TASK 5: FAIL-SAFE UI DATA - Ensure AI fields have safe defaults
-    const aiSummary = application.extractedData?.ai_summary || application.aiSummary || ""
-    // Officer summary: prefer explicit summary fields, then ai_summary, then llm refinement
-    const officerSummaryRaw = application.extractedData?.summary || application.extractedData?.ai_summary || application.extractedData?.llm_refinement?.refined_summary
-    const safeOfficerSummary = officerSummaryRaw || 'Document processed. Review extracted details.'
+    // Single summary source: prefer backend summary, then ai_summary (same value), then refinement
+    const officerSummary = application.extractedData?.summary || application.extractedData?.ai_summary || ""  // Real intelligence summary
 
     // Build sanitized extracted sections (extractedFields already computed)
     const extractedSections = buildCanonicalExtractedSections(application)
@@ -597,14 +596,13 @@ export function normalizeApplicationData(application: Application): NormalizedAp
     
     // Get decision support and intelligence data
     const decisionSupport = application.extractedData?.decision_support || null
-    const summary = application.extractedData?.summary || application.extractedData?.ai_summary || ""  // Real intelligence summary
     
     // Get ML insights and predictions from backend contract
     const mlInsights = application.extractedData?.ml_insights || {}
     const predictions = application.extractedData?.predictions || {}
     
     // Frontend fail-safe defaults - prefer real intelligence summary over generic fallback
-    const safeAiSummary = summary || aiSummary || ""  // Use real summary first, no generic fallback
+    const safeAiSummary = officerSummary || ""  
     const safeRiskFlags = riskFlags || []
     const safeDecisionSupport = decisionSupport || null
     const safeCanonicalData = canonicalData || null
@@ -643,7 +641,7 @@ export function normalizeApplicationData(application: Application): NormalizedAp
       
       // TASK 4: FAIL-SAFE UI DATA - Always provide AI fields with safe defaults
       aiSummary: safeAiSummary,
-      officerSummary: safeOfficerSummary,
+      officerSummary: officerSummary,
       priorityScore: priorityScoreNormalized,
       fraudRiskScore: application.fraudRiskScore || 0,
       verificationRecommendation: application.verificationRecommendation || safeDecisionSupport?.recommendation || "",
@@ -920,8 +918,9 @@ export function buildSafeDetailState(rawApp: any): SafeApplicationState {
       farmInfo: rawApp.farmInfo || {},
       documents: Array.isArray(rawApp.documents) ? rawApp.documents : [],
       extractedData: safeExtractedData,
-      aiSummary: safeExtractedData?.ai_summary || rawApp.aiSummary || '',
-      officerSummary: normalized.officerSummary || safeExtractedData?.summary || safeExtractedData?.ai_summary || 'Document processed. Review extracted details.',
+      // Single source for summary to prevent duplication
+      officerSummary: safeExtractedData?.summary || safeExtractedData?.ai_summary || 'Document processed. Review extracted details.',
+      aiSummary: safeExtractedData?.summary || safeExtractedData?.ai_summary || 'Document processed. Review extracted details.',
       aiProcessingStatus: normalizeAIStatus(rawApp.aiProcessingStatus),
       createdAt: rawApp.createdAt || null,
       reviewDate: rawApp.reviewDate || null,

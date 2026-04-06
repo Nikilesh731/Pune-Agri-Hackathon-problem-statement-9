@@ -5,6 +5,7 @@
 
 import { aiOrchestratorRepository } from './ai-orchestrator.repository'
 import { AIResponse } from './ai-orchestrator.types'
+import { documentNormalizationService } from '../applications/documentNormalization.service'
 
 interface ProcessDocumentInput {
   fileUrl?: string
@@ -35,8 +36,17 @@ class AIOrchestratorService {
     }
 
     try {
-      console.log('[AI] document-processing started')
+      console.log('[AI] UNIFIED document processing started')
+      console.log('[AI] Input:', {
+        fileName: input.fileName,
+        fileType: input.fileType,
+        fileUrl: input.fileUrl.substring(0, 50) + '...'
+      })
 
+      // UNIFIED PROCESSING: All formats go through the same pipeline
+      // The key is that document normalization has already prepared the input
+      // so we can treat PDF, images, and other formats identically
+      
       const payload = {
         processing_type: 'full_process',
         options: {
@@ -46,17 +56,14 @@ class AIOrchestratorService {
         },
       }
 
-      console.log('[AI DEBUG] Payload:', payload)
+      console.log('[AI] Starting document processing')
 
       const documentProcessingResult = await aiOrchestratorRepository.callAIService(
         'document-processing',
         payload
       )
 
-      console.log(
-        '[AI DEBUG] document-processing response:',
-        JSON.stringify(documentProcessingResult)
-      )
+      console.log('[AI] Document processing completed')
 
       // IMPORTANT:
       // Repository returns { success, data, error } and does not throw for normal service failures.
@@ -81,9 +88,15 @@ class AIOrchestratorService {
 
       // Preserve authoritative extraction immediately
       results.extractedData = documentProcessingResult.data
-      console.log('[AI] extraction SUCCESS')
+      console.log('[AI] UNIFIED extraction SUCCESS')
 
-      // Optional: Summarization
+      // Store raw extracted text for content signature generation
+      if (documentProcessingResult.data?.rawText) {
+        results.rawExtractedText = documentProcessingResult.data.rawText
+      }
+
+      // Optional downstream processing - same for all formats
+      // Summarization
       try {
         const documentType =
           results.extractedData?.canonical?.document_type ||
@@ -226,7 +239,7 @@ class AIOrchestratorService {
       results.aiProcessedAt = new Date()
       results.aiProcessingStatus = 'completed'
 
-      console.log('[AI] returning preserved extraction result')
+      console.log('[AI] UNIFIED processing completed successfully')
 
       return {
         success: true,
@@ -240,6 +253,8 @@ class AIOrchestratorService {
         timestamp: new Date(),
       }
     } catch (error) {
+      console.error('[AI] UNIFIED processing failed:', error)
+      
       return {
         success: false,
         error: error instanceof Error ? error.message : 'AI processing failed',

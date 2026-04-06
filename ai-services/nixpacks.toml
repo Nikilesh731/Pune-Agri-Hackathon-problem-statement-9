@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["tesseract", "libtiff", "libjpeg", "libpng", "libwebp", "gcc"]
+
+[phases.build]
+cmds = ["pip install --no-cache-dir -r requirements.txt"]
+
+[start]
+cmd = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"

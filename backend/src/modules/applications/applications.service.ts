@@ -4,6 +4,7 @@
  */
 import { applicationsRepository } from './applications.repository'
 import { aiOrchestratorService } from '../ai-orchestrator/ai-orchestrator.service'
+import { documentNormalizationService } from './documentNormalization.service'
 import { Application, CreateApplicationInput, UpdateApplicationInput, ApplicationQuery, DuplicateCheckResult, CreateApplicationResponse, ApplicationVersionHistory } from './applications.types'
 import { CaseService } from '../cases/cases.service'
 import { supabase } from '../../config/supabase'
@@ -82,26 +83,72 @@ function mapAiResultToApplicationStatus(
 import crypto from 'crypto'
 
 /**
- * Generate normalized content fingerprint from OCR text
+ * Generate normalized content fingerprint from structured extracted data
+ * Uses structured fields first, falls back to OCR text if needed
  */
-function generateContentFingerprint(ocrText?: string): string | null {
-  if (!ocrText || typeof ocrText !== 'string') {
+function generateContentFingerprint(extractedData?: any): string | null {
+  if (!extractedData || typeof extractedData !== 'object') {
     return null;
   }
   
-  // Normalize OCR text for fingerprinting
-  const normalized = ocrText
-    .toLowerCase()                           // lowercase
-    .replace(/\s+/g, ' ')                  // collapse whitespace
-    .replace(/\n\s*\n/g, '\n')             // remove repeated line breaks
-    .replace(/[^\w\s]/g, '')               // remove punctuation noise
-    .trim();
+  // PRIORITY 1: Use structured fields for fingerprinting
+  const structured = extractedData.structured_data || {};
+  const canonical = extractedData.canonical || {};
   
-  if (normalized.length < 50) {
-    return null; // Too short to be reliable
+  // Build fingerprint from key identity and document fields
+  const fingerprintFields = [];
+  
+  // Document type (critical for cross-format detection)
+  const docType = extractedData.document_type || canonical.document_type || 'unknown';
+  fingerprintFields.push(`type:${docType}`);
+  
+  // Identity fields (highest priority for duplicate detection)
+  const aadhaar = structured.aadhaar_number || canonical.applicant?.aadhaar_number || canonical.applicant?.aadhaar || '';
+  if (aadhaar) fingerprintFields.push(`aadhaar:${aadhaar.replace(/\s/g, '')}`);
+  
+  const name = structured.farmer_name || structured.applicant_name || canonical.applicant?.name || '';
+  if (name) fingerprintFields.push(`name:${name.toLowerCase().replace(/\s+/g, ' ')}`);
+  
+  const mobile = structured.mobile_number || canonical.applicant?.mobile_number || canonical.applicant?.mobile || '';
+  if (mobile) fingerprintFields.push(`mobile:${mobile.replace(/\D/g, '')}`);
+  
+  // Document-specific fields
+  const scheme = structured.scheme_name || canonical.request?.scheme_name || '';
+  if (scheme) fingerprintFields.push(`scheme:${scheme.toLowerCase().replace(/\s+/g, ' ')}`);
+  
+  const claimType = structured.claim_type || canonical.request?.request_type || '';
+  if (claimType) fingerprintFields.push(`claim:${claimType.toLowerCase().replace(/\s+/g, ' ')}`);
+  
+  const amount = structured.requested_amount || structured.claim_amount || structured.subsidy_amount || canonical.request?.requested_amount || '';
+  if (amount) {
+    const cleanAmount = amount.toString().replace(/[^\d.]/g, '');
+    if (cleanAmount) fingerprintFields.push(`amount:${cleanAmount}`);
   }
   
-  return crypto.createHash('sha256').update(normalized).digest('hex').substring(0, 64);
+  // If we have enough structured fields, use them for fingerprint
+  if (fingerprintFields.length >= 3) {
+    const structuredFingerprint = fingerprintFields.join('|');
+    return crypto.createHash('sha256').update(structuredFingerprint).digest('hex').substring(0, 64);
+  }
+  
+  // PRIORITY 2: Fallback to raw OCR text if structured fields are insufficient
+  const ocrText = extractedData.raw_text || extractedData.ocrText || '';
+  if (ocrText && typeof ocrText === 'string') {
+    // Normalize OCR text for fingerprinting
+    const normalized = ocrText
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .replace(/\n\s*\n/g, '\n')
+      .replace(/[^\w\s]/g, '')
+      .trim();
+    
+    if (normalized.length >= 50) {
+      return crypto.createHash('sha256').update(normalized).digest('hex').substring(0, 64);
+    }
+  }
+  
+  // PRIORITY 3: If nothing is sufficient, return null
+  return null;
 }
 
 /**
@@ -118,6 +165,103 @@ function allowsResubmission(status: string): boolean {
 function isActiveStatus(status: string): boolean {
   const normalizedStatus = status.toLowerCase().replace(/[-\s]/g, '_');
   return ['uploaded', 'processing', 'under_review', 'case_ready', 'pending'].includes(normalizedStatus);
+}
+
+/**
+ * Normalize extractedData contract before persistence
+ * Ensures canonical.document_type is populated and contract structure is stable
+ */
+function normalizeExtractedDataContract(extractedData: any): any {
+  if (!extractedData || typeof extractedData !== 'object') {
+    return extractedData;
+  }
+
+  // Create a deep copy to avoid mutation
+  const normalized = JSON.parse(JSON.stringify(extractedData));
+
+  // Ensure top-level document_type is preserved
+  const topLevelDocType = normalized.document_type || 'unknown';
+
+  // Ensure canonical exists and has proper structure
+  if (!normalized.canonical || typeof normalized.canonical !== 'object') {
+    normalized.canonical = {};
+  }
+
+  // CRITICAL: Ensure canonical.document_type is populated when document_type is known
+  if (!normalized.canonical.document_type && topLevelDocType !== 'unknown') {
+    normalized.canonical.document_type = topLevelDocType;
+  }
+
+  // Ensure canonical has stable object structure
+  const canonicalStructure = {
+    document_type: normalized.canonical.document_type || topLevelDocType,
+    document_category: normalized.canonical.document_category || 'unknown',
+    applicant: {
+      name: normalized.canonical.applicant?.name || '',
+      guardian_name: normalized.canonical.applicant?.guardian_name || '',
+      aadhaar_number: normalized.canonical.applicant?.aadhaar_number || normalized.canonical.applicant?.aadhaar || '',
+      mobile_number: normalized.canonical.applicant?.mobile_number || normalized.canonical.applicant?.mobile || '',
+      address: normalized.canonical.applicant?.address || '',
+      village: normalized.canonical.applicant?.village || '',
+      district: normalized.canonical.applicant?.district || '',
+      state: normalized.canonical.applicant?.state || ''
+    },
+    agriculture: {
+      land_size: normalized.canonical.agriculture?.land_size || '',
+      land_unit: normalized.canonical.agriculture?.land_unit || '',
+      survey_number: normalized.canonical.agriculture?.survey_number || '',
+      crop_name: normalized.canonical.agriculture?.crop_name || '',
+      season: normalized.canonical.agriculture?.season || '',
+      location: normalized.canonical.agriculture?.location || ''
+    },
+    request: {
+      scheme_name: normalized.canonical.request?.scheme_name || '',
+      request_type: normalized.canonical.request?.request_type || '',
+      requested_amount: normalized.canonical.request?.requested_amount || '',
+      issue_summary: normalized.canonical.request?.issue_summary || '',
+      claim_reason: normalized.canonical.request?.claim_reason || ''
+    },
+    document_meta: {
+      document_date: normalized.canonical.document_meta?.document_date || '',
+      reference_number: normalized.canonical.document_meta?.reference_number || '',
+      supporting_doc_type: normalized.canonical.document_meta?.supporting_doc_type || '',
+      source_file_name: normalized.canonical.document_meta?.source_file_name || ''
+    },
+    verification: {
+      missing_fields: Array.isArray(normalized.canonical.verification?.missing_fields) 
+        ? normalized.canonical.verification.missing_fields 
+        : [],
+      field_confidences: normalized.canonical.verification?.field_confidences || {},
+      extraction_confidence: normalized.canonical.verification?.extraction_confidence || 0,
+      validation_errors: Array.isArray(normalized.canonical.verification?.validation_errors) 
+        ? normalized.canonical.verification.validation_errors 
+        : [],
+      recommendation: normalized.canonical.verification?.recommendation || '',
+      reasoning: Array.isArray(normalized.canonical.verification?.reasoning) 
+        ? normalized.canonical.verification.reasoning 
+        : []
+    }
+  };
+
+  // Merge with existing canonical data, preserving any additional fields
+  normalized.canonical = {
+    ...canonicalStructure,
+    ...normalized.canonical,
+    applicant: { ...canonicalStructure.applicant, ...normalized.canonical.applicant },
+    agriculture: { ...canonicalStructure.agriculture, ...normalized.canonical.agriculture },
+    request: { ...canonicalStructure.request, ...normalized.canonical.request },
+    document_meta: { ...canonicalStructure.document_meta, ...normalized.canonical.document_meta },
+    verification: { ...canonicalStructure.verification, ...normalized.canonical.verification }
+  };
+
+  // Ensure other top-level fields have proper defaults
+  normalized.structured_data = normalized.structured_data || {};
+  normalized.extracted_fields = normalized.extracted_fields || {};
+  normalized.missing_fields = Array.isArray(normalized.missing_fields) ? normalized.missing_fields : [];
+  normalized.confidence = normalized.confidence || 0;
+  normalized.reasoning = Array.isArray(normalized.reasoning) ? normalized.reasoning : [];
+
+  return normalized;
 }
 
 class ApplicationsService {
@@ -255,75 +399,102 @@ class ApplicationsService {
    */
 
   /**
-   * FINAL STRICT DUPLICATE CHECK - File hash based pre-save duplicate logic
-   * This is the ONLY authoritative duplicate check method
+   * UNIFIED DUPLICATE CHECK - Cross-format detection with content signatures
    */
-  async checkStrictDuplicate(params: {
+  async checkUnifiedDuplicate(params: {
     fileHash: string
+    contentHash?: string
     fileName: string
     fileSize: number
     applicantId: string
+    normalizedDocument?: any
+    extractedData?: any
   }): Promise<{
     isDuplicate: boolean
     canResubmit: boolean
     existingApplicationId?: string
     existingStatus?: string
     blockReason?: string
+    duplicateType?: 'exact_file' | 'same_content'
   }> {
-    const { fileHash, fileName, fileSize, applicantId } = params
+    const { fileHash, contentHash, fileName, fileSize, applicantId, normalizedDocument, extractedData } = params
     
-    console.log("[DUP CHECK] Start")
-    console.log('[STRICT DUPLICATE] Final authoritative check:', {
-      fileHash: fileHash.substring(0, 16) + '...',
-      fileName,
-      fileSize,
-      applicantId
-    })
+    console.log('[DUP] starting unified duplicate detection')
+    console.log('[DUP] file hash:', fileHash.substring(0, 16) + '...')
+    if (contentHash) {
+      console.log('[DUP] content hash:', contentHash.substring(0, 16) + '...')
+    }
 
     try {
-      // PRIMARY KEY: File hash exact match (most reliable)
-      const hashMatches = await applicationsRepository.findApplicationsByFileHash(fileHash)
+      // LEVEL 1: Exact file hash match (highest confidence)
+      const exactMatches = await applicationsRepository.findApplicationsByRawFileHash(fileHash)
       
-      console.log("[DUP CHECK] Query result:", hashMatches.length, "hash matches found")
-      
-      if (hashMatches.length > 0) {
-        const latestMatch = hashMatches[0] // Already ordered by desc createdAt
+      if (exactMatches.length > 0) {
+        const latestMatch = exactMatches[0]
+        console.log('[DUP] exact duplicate found')
         
-        console.log('[STRICT DUPLICATE] File hash match found:', {
-          existingApplicationId: latestMatch.id,
-          existingStatus: latestMatch.status,
-          fileName: latestMatch.fileName
-        })
-
-        // Use unified status helper
         const isActive = isActiveStatus(latestMatch.status)
         const canResubmit = allowsResubmission(latestMatch.status)
 
         if (isActive) {
-          console.log('[STRICT DUPLICATE] BLOCKED - Active duplicate found')
-          const blockResult = {
+          console.log('[DUP] blocked - exact duplicate active')
+          return {
             isDuplicate: true,
             canResubmit: false,
             existingApplicationId: latestMatch.id,
             existingStatus: latestMatch.status,
-            blockReason: 'Duplicate document already under processing'
+            blockReason: 'Duplicate document already under processing',
+            duplicateType: 'exact_file'
           }
-          console.log("[DUP CHECK] Returning:", blockResult)
-          return blockResult
         } else if (canResubmit) {
-          console.log('[STRICT DUPLICATE] ALLOWED - Completed duplicate, re-upload permitted')
-          const resubmitResult = {
+          console.log('[DUP] resubmission allowed - exact duplicate in resubmittable state')
+          return {
             isDuplicate: true,
             canResubmit: true,
             existingApplicationId: latestMatch.id,
-            existingStatus: latestMatch.status
+            existingStatus: latestMatch.status,
+            duplicateType: 'exact_file'
           }
-          console.log("[DUP CHECK] Returning:", resubmitResult)
-          return resubmitResult
         }
       }
 
-      // FALLBACK: Same applicant + filename + size (only when hash not found)
+      // LEVEL 2: Content hash match (cross-format duplicate detection)
+      // FIXED: Run content-based duplicate check whenever contentHash is available
+      // Do NOT require normalizedDocument just to perform the DB lookup
+      if (contentHash) {
+        const contentMatches = await applicationsRepository.findApplicationsByNormalizedContentHash(contentHash)
+        
+        if (contentMatches.length > 0) {
+          const latestMatch = contentMatches[0]
+          console.log('[DUP] same-content duplicate found')
+          
+          const isActive = isActiveStatus(latestMatch.status)
+          const canResubmit = allowsResubmission(latestMatch.status)
+
+          if (isActive) {
+            console.log('[DUP] blocked - same content duplicate active')
+            return {
+              isDuplicate: true,
+              canResubmit: false,
+              existingApplicationId: latestMatch.id,
+              existingStatus: latestMatch.status,
+              blockReason: 'This upload matches the content of an existing application of the same document type that is still active. Re-upload is only allowed if clarification or officer-requested changes were issued.',
+              duplicateType: 'same_content'
+            }
+          } else if (canResubmit) {
+            console.log('[DUP] resubmission allowed - same content duplicate in resubmittable state')
+            return {
+              isDuplicate: true,
+              canResubmit: true,
+              existingApplicationId: latestMatch.id,
+              existingStatus: latestMatch.status,
+              duplicateType: 'same_content'
+            }
+          }
+        }
+      }
+
+      // LEVEL 3: Fallback filename+size check (legacy compatibility)
       const filenameMatches = await applicationsRepository.findApplicationsByFileNameAndSize(
         fileName,
         fileSize,
@@ -332,53 +503,47 @@ class ApplicationsService {
       
       if (filenameMatches.length > 0) {
         const latestMatch = filenameMatches[0]
-        
-        console.log('[STRICT DUPLICATE] Filename+size fallback match:', {
-          existingApplicationId: latestMatch.id,
-          existingStatus: latestMatch.status
-        })
+        console.log('[DUP] filename+size fallback match:', latestMatch.id)
 
         const isActive = isActiveStatus(latestMatch.status)
         const canResubmit = allowsResubmission(latestMatch.status)
 
         if (isActive) {
+          console.log('[DUP] blocked - filename+size duplicate active')
           return {
             isDuplicate: true,
             canResubmit: false,
             existingApplicationId: latestMatch.id,
             existingStatus: latestMatch.status,
-            blockReason: 'Same filename and size with active application'
+            blockReason: 'Same filename and size with active application',
+            duplicateType: 'exact_file'
           }
         } else if (canResubmit) {
+          console.log('[DUP] resubmission allowed - filename+size duplicate in resubmittable state')
           return {
             isDuplicate: true,
             canResubmit: true,
             existingApplicationId: latestMatch.id,
-            existingStatus: latestMatch.status
+            existingStatus: latestMatch.status,
+            duplicateType: 'exact_file'
           }
         }
       }
 
-      console.log('[STRICT DUPLICATE] No duplicates found - allowing new upload')
-      const finalResult = {
+      console.log('[DUP] no duplicates found - allowing new upload')
+      return {
         isDuplicate: false,
         canResubmit: false,
-        existingApplicationId: undefined,
-        existingStatus: undefined,
-        blockReason: undefined
+        duplicateType: undefined
       }
-      console.log("[DUP CHECK] Returning:", finalResult)
-      return finalResult
 
     } catch (error) {
-      console.error('[STRICT DUPLICATE] Error during duplicate check:', error)
+      console.error('[DUP] error during unified duplicate check:', error)
       // On error, allow upload but don't block
       return {
         isDuplicate: false,
         canResubmit: false,
-        existingApplicationId: undefined,
-        existingStatus: undefined,
-        blockReason: undefined
+        duplicateType: undefined
       }
     }
   }
@@ -431,49 +596,78 @@ class ApplicationsService {
   async createApplication(applicationData: CreateApplicationInput): Promise<CreateApplicationResponse> {
     console.log(`[CREATE APP] Starting application creation`);
     
-    // PART 1: STRICT DUPLICATE DETECTION BEFORE SAVING
-    const fileHash = (applicationData as any).fileHash;
-    if (!fileHash) {
-      throw new Error('File hash is required for duplicate detection');
+    // PART 1: RESOLVE HASHES FOR DUPLICATE DETECTION
+    const rawFileHash = (applicationData as any).rawFileHash || (applicationData as any).fileHash;
+    
+    if (!rawFileHash) {
+      throw new Error('Raw file hash is required for duplicate detection');
     }
     
-    // Find existing applications with same fileHash and farmerId
-    const existingApps = await applicationsRepository.findApplicationsByFileHash(fileHash);
-    const sameFarmerApps = existingApps.filter(app => app.applicantId === applicationData.applicantId);
+    // PART 2: GENERATE PRE-CREATE CONTENT HASH WHEN POSSIBLE
+    // PRIORITY A: Use existing normalizedContentHash if available
+    let preCreateContentHash = (applicationData as any).normalizedContentHash;
     
-    if (sameFarmerApps.length > 0) {
-      const existing = sameFarmerApps[0]; // Latest one
-      const normalizedStatus = existing.status.toLowerCase().replace(/[-\s]/g, '_');
+    // PRIORITY B: Generate from extractedData if available and no existing hash
+    if (!preCreateContentHash && (applicationData as any).extractedData) {
+      const extractedData = (applicationData as any).extractedData;
       
-      // BLOCK if status is active: uploaded, processing, under_review, pending
-      if (['uploaded', 'processing', 'under_review', 'pending'].includes(normalizedStatus)) {
-        console.log('[DUPLICATE] BLOCKED - Active duplicate found:', {
-          existingApplicationId: existing.id,
-          existingStatus: existing.status
-        });
-        
-        // THROW 409 - DO NOT SAVE, DO NOT SEND TO AI
-        const error = new Error('Duplicate document already under processing');
-        (error as any).statusCode = 409;
-        (error as any).code = 'DUPLICATE_BLOCKED';
-        (error as any).existingApplicationId = existing.id;
-        (error as any).existingStatus = existing.status;
-        throw error;
+      // Normalize contract first to ensure stable structure
+      const normalizedExtractedData = normalizeExtractedDataContract(extractedData);
+      
+      // Generate content fingerprint from normalized data
+      preCreateContentHash = generateContentFingerprint(normalizedExtractedData);
+      
+      if (preCreateContentHash) {
+        console.log('[NORMALIZATION] content hash generated from pre-create extractedData');
       }
+    }
+    
+    // PRIORITY C: If no structured data available, keep preCreateContentHash as null
+    // Exact file duplicate detection will still work
+    
+    // PART 3: UNIFIED DUPLICATE DETECTION WITH AVAILABLE HASHES
+    const duplicateCheck = await this.checkUnifiedDuplicate({
+      fileHash: rawFileHash,
+      contentHash: preCreateContentHash,
+      fileName: applicationData.fileName || 'unknown',
+      fileSize: applicationData.fileSize || 0,
+      applicantId: applicationData.applicantId,
+      extractedData: (applicationData as any).extractedData
+    });
+    
+    // Handle duplicate blocking
+    if (duplicateCheck.isDuplicate && !duplicateCheck.canResubmit) {
+      console.log('[DUP] BLOCKED -', duplicateCheck.blockReason, {
+        existingApplicationId: duplicateCheck.existingApplicationId,
+        existingStatus: duplicateCheck.existingStatus,
+        duplicateType: duplicateCheck.duplicateType
+      });
       
-      // ALLOW re-upload if status is completed: approved, rejected, requires_action
-      if (['approved', 'rejected', 'requires_action'].includes(normalizedStatus)) {
-        console.log('[RE-UPLOAD] ALLOWED - Completed duplicate found:', {
-          existingApplicationId: existing.id,
-          existingStatus: existing.status,
-          existingVersion: existing.versionNumber
+      const error = new Error(duplicateCheck.blockReason || 'Duplicate document detected');
+      (error as any).statusCode = 409;
+      (error as any).code = 'DUPLICATE_BLOCKED';
+      (error as any).existingApplicationId = duplicateCheck.existingApplicationId;
+      (error as any).existingStatus = duplicateCheck.existingStatus;
+      (error as any).duplicateType = duplicateCheck.duplicateType;
+      throw error;
+    }
+    
+    // Handle allowed resubmission
+    if (duplicateCheck.isDuplicate && duplicateCheck.canResubmit && duplicateCheck.existingApplicationId) {
+      const existingApp = await applicationsRepository.getApplicationById(duplicateCheck.existingApplicationId);
+      if (existingApp) {
+        console.log('[RE-UPLOAD] ALLOWED -', {
+          existingApplicationId: existingApp.id,
+          existingStatus: existingApp.status,
+          existingVersion: existingApp.versionNumber,
+          duplicateType: duplicateCheck.duplicateType
         });
         
         // Create NEW application with version chain
         const reuploadData = {
           ...applicationData,
-          versionNumber: existing.versionNumber + 1,
-          parentApplicationId: existing.id,
+          versionNumber: existingApp.versionNumber + 1,
+          parentApplicationId: existingApp.id,
           isReupload: true
         };
         
@@ -481,7 +675,9 @@ class ApplicationsService {
           ...reuploadData,
           aiProcessingStatus: 'pending',
           farmerId: applicationData.farmerId ?? null,
-          notes: `Re-upload version ${reuploadData.versionNumber} of application ${existing.id}`,
+          rawFileHash: rawFileHash,
+          normalizedContentHash: preCreateContentHash,
+          notes: `Re-upload version ${reuploadData.versionNumber} of application ${existingApp.id} (${duplicateCheck.duplicateType})`,
           personalInfo: applicationData.personalInfo || {
             firstName: '',
             lastName: '',
@@ -515,7 +711,7 @@ class ApplicationsService {
           status: 'reupload_allowed',
           message: `Re-upload detected (Version ${reuploadData.versionNumber})`,
           isReupload: true,
-          parentApplicationId: existing.id
+          parentApplicationId: existingApp.id
         };
       }
     }
@@ -529,7 +725,8 @@ class ApplicationsService {
       versionNumber: applicationData.versionNumber ?? 1,
       parentApplicationId: applicationData.parentApplicationId ?? null,
       farmerId: applicationData.farmerId ?? null,
-      fileHash: fileHash || null,
+      rawFileHash: rawFileHash,
+      normalizedContentHash: preCreateContentHash,
       notes: 'Application submitted - processing in background',
       personalInfo: applicationData.personalInfo || {
         firstName: '',
@@ -803,15 +1000,51 @@ class ApplicationsService {
         aiSummary: aiResponse.data?.aiSummary || aiResponse.data?.extractedData?.ai_summary || aiResponse.data?.extractedData?.summary || `Document processed as ${extractedData?.document_type || 'unknown'}. Review extracted fields for verification.`
       };
       
-      // Add normalized content hash if available from AI response
-      if (aiResponse.data?.rawExtractedText) {
-        const fingerprint = generateContentFingerprint(aiResponse.data.rawExtractedText);
-        if (fingerprint) {
-          (updateData as any).normalizedContentHash = fingerprint;
-        }
+      // FAULT TOLERANCE: Preserve successful extraction even if optional downstream fails
+      // Only update fields that succeeded, never overwrite with failure data
+      const faultTolerantUpdate: any = {
+        extractedData, // Always preserve if we have it
+        farmerId: farmerId || undefined,
+        status: finalStatus,
+        aiProcessedAt: new Date()
+      };
+
+      // CRITICAL: Include normalizedContentHash in fault-tolerant update
+      const fingerprint = generateContentFingerprint(extractedData);
+      if (fingerprint) {
+        faultTolerantUpdate.normalizedContentHash = fingerprint;
+        console.log('[NORMALIZATION] Generated and persisted content hash:', fingerprint.substring(0, 16) + '...');
       }
+
+      // Only add optional fields if they succeeded
+      if (aiResponse.data?.priorityScore !== undefined) {
+        faultTolerantUpdate.priorityScore = aiResponse.data.priorityScore;
+      }
+      if (aiResponse.data?.fraudRiskScore !== undefined) {
+        faultTolerantUpdate.fraudRiskScore = aiResponse.data.fraudRiskScore;
+      }
+      if (aiResponse.data?.fraudFlags) {
+        faultTolerantUpdate.fraudFlags = aiResponse.data.fraudFlags;
+      }
+      if (aiResponse.data?.verificationRecommendation) {
+        faultTolerantUpdate.verificationRecommendation = aiResponse.data.verificationRecommendation;
+      }
+      if (aiResponse.data?.aiSummary || aiResponse.data?.extractedData?.ai_summary || aiResponse.data?.extractedData?.summary) {
+        faultTolerantUpdate.aiSummary = aiResponse.data.aiSummary || aiResponse.data.extractedData?.ai_summary || aiResponse.data.extractedData?.summary || `Document processed as ${extractedData?.document_type || 'unknown'}. Review extracted fields for verification.`;
+      }
+
+      // Set AI processing status based on extraction success, not optional downstream
+      faultTolerantUpdate.aiProcessingStatus = extractedData.document_type === "unknown" ? "failed" : "completed";
       
-      await this.updateApplication(applicationId, updateData);
+      await this.updateApplication(applicationId, faultTolerantUpdate);
+      
+      console.log('[AI FAULT TOLERANCE] Applied fault-tolerant update:', {
+        hasExtractedData: !!extractedData,
+        hasPriorityScore: aiResponse.data?.priorityScore !== undefined,
+        hasFraudData: aiResponse.data?.fraudRiskScore !== undefined,
+        hasSummary: !!faultTolerantUpdate.aiSummary,
+        finalStatus: faultTolerantUpdate.aiProcessingStatus
+      });
       
       // Resolve case if needed using shared resolved document type (same as sync path)
       if (farmerId) {
@@ -1001,15 +1234,56 @@ class ApplicationsService {
       aiSummary: aiResponse.data?.aiSummary || aiResponse.data?.extractedData?.ai_summary || aiResponse.data?.extractedData?.summary || `Document processed as ${extractedData?.document_type || 'unknown'}. Review extracted fields for verification.`
     };
     
-    // Add normalized content hash if available from AI response
-    if (aiResponse.data?.rawExtractedText) {
-      const fingerprint = generateContentFingerprint(aiResponse.data.rawExtractedText);
-      if (fingerprint) {
-        (updateData as any).normalizedContentHash = fingerprint;
-      }
+    // Add normalized content hash based on extracted data
+    const fingerprint = generateContentFingerprint(extractedData);
+    if (fingerprint) {
+      (updateData as any).normalizedContentHash = fingerprint;
     }
+
+    // FAULT TOLERANCE: Preserve successful extraction even if optional downstream fails
+    // Only update fields that succeeded, never overwrite with failure data
+    const faultTolerantUpdate: any = {
+      extractedData, // Always preserve if we have it
+      farmerId: farmerId || undefined,
+      status: finalStatus,
+      aiProcessedAt: new Date()
+    };
+
+    // CRITICAL: Include normalizedContentHash in fault-tolerant update
+    if (fingerprint) {
+      faultTolerantUpdate.normalizedContentHash = fingerprint;
+      console.log('[NORMALIZATION] Generated and persisted content hash:', fingerprint.substring(0, 16) + '...');
+    }
+
+    // Only add optional fields if they succeeded
+    if (aiResponse.data?.priorityScore !== undefined) {
+      faultTolerantUpdate.priorityScore = aiResponse.data.priorityScore;
+    }
+    if (aiResponse.data?.fraudRiskScore !== undefined) {
+      faultTolerantUpdate.fraudRiskScore = aiResponse.data.fraudRiskScore;
+    }
+    if (aiResponse.data?.fraudFlags) {
+      faultTolerantUpdate.fraudFlags = aiResponse.data.fraudFlags;
+    }
+    if (aiResponse.data?.verificationRecommendation) {
+      faultTolerantUpdate.verificationRecommendation = aiResponse.data.verificationRecommendation;
+    }
+    if (aiResponse.data?.aiSummary || aiResponse.data?.extractedData?.ai_summary || aiResponse.data?.extractedData?.summary) {
+      faultTolerantUpdate.aiSummary = aiResponse.data.aiSummary || aiResponse.data.extractedData?.ai_summary || aiResponse.data.extractedData?.summary || `Document processed as ${extractedData?.document_type || 'unknown'}. Review extracted fields for verification.`;
+    }
+
+    // Set AI processing status based on extraction success, not optional downstream
+    faultTolerantUpdate.aiProcessingStatus = extractedData.document_type === "unknown" ? "failed" : "completed";
     
-    await applicationsRepository.updateApplication(applicationId, updateData);
+    await applicationsRepository.updateApplication(applicationId, faultTolerantUpdate);
+    
+    console.log('[SYNC AI FAULT TOLERANCE] Applied fault-tolerant update:', {
+      hasExtractedData: !!extractedData,
+      hasPriorityScore: aiResponse.data?.priorityScore !== undefined,
+      hasFraudData: aiResponse.data?.fraudRiskScore !== undefined,
+      hasSummary: !!faultTolerantUpdate.aiSummary,
+      finalStatus: faultTolerantUpdate.aiProcessingStatus
+    });
     
     // Resolve case if needed using shared resolved document type
     if (farmerId) {
@@ -1188,6 +1462,12 @@ class ApplicationsService {
   }
 
   async updateApplication(id: string, updateData: UpdateApplicationInput): Promise<Application> {
+    // CRITICAL: Normalize extractedData contract before persistence
+    if (updateData.extractedData) {
+      updateData.extractedData = normalizeExtractedDataContract(updateData.extractedData);
+      console.log('[NORMALIZATION] Applied extractedData contract normalization for application:', id);
+    }
+    
     return await applicationsRepository.updateApplication(id, updateData)
   }
 
