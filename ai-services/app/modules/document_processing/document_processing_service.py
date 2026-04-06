@@ -1440,7 +1440,7 @@ class DocumentProcessingService:
             if file_extension == 'pdf':
                 text = self._extract_text_from_pdf(file_content)
             elif file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp']:
-                text = self._extract_text_from_image(file_content)
+                text = self._extract_text_from_image(file_content, filename)
             elif file_extension == 'docx':
                 text = self._extract_text_from_docx(file_content)
             elif file_extension in ['txt', 'text']:
@@ -1555,7 +1555,7 @@ class DocumentProcessingService:
             logger.error(f"[EXTRACT] DOCX extraction failed: {e}")
             raise ValueError(f"DOCX extraction failed: {str(e)}")
     
-    def _extract_text_from_image(self, file_content: bytes) -> str:
+    def _extract_text_from_image(self, file_content: bytes, filename: str) -> str:
         """Extract text from image bytes using OCR"""
         import logging
         logger = logging.getLogger(__name__)
@@ -1564,49 +1564,20 @@ class DocumentProcessingService:
             import PIL.Image
             import pytesseract
             import io
-            import os
+            import shutil
             
-            # Configure tesseract path for Railway production environment
-            # Railway installs tesseract via nixpkgs to /nix/store/...
-            # We'll try multiple common locations
-            tesseract_paths = [
-                "/nix/store",  # Nix store base - pytesseract will find it in PATH
-                "/usr/bin/tesseract",  # Standard location
-                "/usr/local/bin/tesseract",  # Common location
-            ]
-            
-            # Check if tesseract is available in PATH or set explicit path
-            try:
-                # Test if tesseract is available
-                pytesseract.get_tesseract_version()
-                logger.info("[DOC OCR] Tesseract found in PATH")
-            except Exception as path_error:
-                # Try to find tesseract in common locations
-                tesseract_found = False
-                for base_path in tesseract_paths:
-                    if base_path == "/nix/store":
-                        # For nix store, we need to find the actual tesseract binary
-                        try:
-                            import subprocess
-                            result = subprocess.run(['which', 'tesseract'], capture_output=True, text=True)
-                            if result.returncode == 0:
-                                tesseract_path = result.stdout.strip()
-                                pytesseract.pytesseract.tesseract_cmd = tesseract_path
-                                logger.info(f"[DOC OCR] Found tesseract via which: {tesseract_path}")
-                                tesseract_found = True
-                                break
-                        except Exception:
-                            continue
-                    else:
-                        if os.path.exists(base_path):
-                            pytesseract.pytesseract.tesseract_cmd = base_path
-                            logger.info(f"[DOC OCR] Using tesseract at: {base_path}")
-                            tesseract_found = True
-                            break
+            # STEP 2: SAFE RUNTIME DETECTION
+            def configure_tesseract():
+                tesseract_path = shutil.which("tesseract")
                 
-                if not tesseract_found:
-                    # Last resort: let pytesseract try with default
-                    logger.warning("[DOC OCR] Tesseract not found in standard locations, trying default")
+                if not tesseract_path:
+                    raise RuntimeError("Tesseract binary not found in runtime environment")
+                
+                pytesseract.pytesseract.tesseract_cmd = tesseract_path
+                logger.info(f"[DOC OCR] Tesseract configured at: {tesseract_path}")
+            
+            # Configure tesseract before OCR
+            configure_tesseract()
             
             # Open image from bytes
             image = PIL.Image.open(io.BytesIO(file_content))
@@ -1629,8 +1600,8 @@ class DocumentProcessingService:
             
             # Apply threshold for better text extraction
             from PIL import Image
-            import numpy as np
             try:
+                import numpy as np
                 # Try to use numpy for better thresholding
                 img_array = np.array(gray_image)
                 # Simple thresholding
@@ -1643,19 +1614,17 @@ class DocumentProcessingService:
                 processed_image = gray_image.point(lambda x: 0 if x < 128 else 255, mode='1')
                 logger.debug("[DOC OCR] Applied PIL threshold preprocessing")
             
-            # Perform OCR with multi-language support (English, Hindi, Marathi)
-            # Language configuration: eng+hin+mar for Maharashtra government documents
-            lang_config = "eng+hin+mar"
-            custom_config = f'--oem 3 --psm 6 -l {lang_config}'
-            
+            # STEP 3: FIX OCR EXECUTION - Marathi + English
             try:
-                extracted_text = pytesseract.image_to_string(processed_image, config=custom_config)
-                logger.info(f"[DOC OCR] Multi-language OCR completed with languages: {lang_config}")
+                extracted_text = pytesseract.image_to_string(
+                    processed_image,
+                    lang="mar+eng"
+                )
+                logger.info("[DOC OCR] Marathi+English OCR completed")
             except Exception as lang_error:
-                logger.warning(f"[DOC OCR] Multi-language OCR failed, falling back to English only: {lang_error}")
+                logger.warning(f"[DOC OCR] Marathi+English OCR failed, falling back to English only: {lang_error}")
                 # Fallback to English only
-                fallback_config = '--oem 3 --psm 6 -l eng'
-                extracted_text = pytesseract.image_to_string(processed_image, config=fallback_config)
+                extracted_text = pytesseract.image_to_string(processed_image, lang="eng")
             
             # PART 8: Enhanced handwritten/low OCR safety
             text_length = len(extracted_text.strip())
@@ -1688,9 +1657,10 @@ class DocumentProcessingService:
             logger.info(f"[DOC OCR] Image OCR extraction complete: {text_length} chars")
             return extracted_text.strip()
             
-        except Exception as e:
-            logger.error(f"[DOC OCR] Image OCR extraction failed: {e}")
-            raise
+        except Exception as ocr_error:
+            logger.error(f"[DOC OCR] OCR processing failed: {ocr_error}")
+            # Raise exception instead of returning fake JSON text
+            raise ValueError(f"OCR failed: Tesseract not available or extraction failed - {str(ocr_error)}")
     
     def _extract_text_from_text_file(self, file_content: bytes) -> str:
         """Extract text from text file bytes"""

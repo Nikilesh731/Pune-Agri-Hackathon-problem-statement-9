@@ -1,5 +1,12 @@
 [phases.setup]
-nixPkgs = ["tesseract", "libtiff", "libjpeg", "libpng", "libwebp", "gcc"]
+nixPkgs = [
+"tesseract",
+"tesseract5",
+"leptonica",
+"libpng",
+"libjpeg",
+"libtiff"
+]
 
 [phases.build]
 cmds = ["pip install --no-cache-dir -r requirements.txt"]
