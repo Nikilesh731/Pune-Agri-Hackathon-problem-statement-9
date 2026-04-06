@@ -1,6 +1,6 @@
 # Repo Map
 
-> Generated automatically on 2026-04-06T07:46:29.027Z
+> Generated automatically on 2026-04-06T15:20:18.075Z
 > Do not edit manually - run `npm run repo:map`
 
 ## Project Structure
@@ -192,6 +192,12 @@ ai-services/
   │   ├── core
   │   │   ├── config.py
   │   │   └── llm_client.py
+  │   ├── ml
+  │   │   ├── __init__.py
+  │   │   ├── feature_extractor.py
+  │   │   ├── ml_service.py
+  │   │   ├── model.pkl
+  │   │   └── train_model.py
   │   ├── models
   │   ├── modules
   │   │   ├── ai_assist
@@ -214,6 +220,7 @@ ai-services/
   │   │   │   ├── __init__.py
   │   │   │   ├── candidate_extraction_engine.py
   │   │   │   ├── classification_service.py
+  │   │   │   ├── docling_ingestion_service.py
   │   │   │   ├── document_processing_router.py
   │   │   │   ├── document_processing_service.py
   │   │   │   ├── document_schemas.py
@@ -222,9 +229,12 @@ ai-services/
   │   │   │   ├── extraction_service.py
   │   │   │   ├── field_filter.py
   │   │   │   ├── generic_extractor.py
+  │   │   │   ├── granite_docling_service.py
+  │   │   │   ├── granite_extraction_service.py
   │   │   │   ├── layout_analyzer.py
   │   │   │   ├── ml_priority.py
   │   │   │   ├── money_extraction_validator.py
+  │   │   │   ├── paddle_ocr_service.py
   │   │   │   ├── predictive_analytics.py
   │   │   │   ├── priority_model.pkl
   │   │   │   ├── processors.py
@@ -235,34 +245,34 @@ ai-services/
   │   │   │   ├── unified_extraction_orchestrator.py
   │   │   │   ├── utils.py
   │   │   │   └── workflow_service.py
-  │   │   └── intelligence
-  │   │       └── intelligence_service.py
+  │   │   ├── intelligence
+  │   │   │   └── intelligence_service.py
+  │   │   └── __init__.py
   │   ├── schemas
   │   │   └── common.py
   │   ├── services
   │   ├── utils
+  │   ├── __init__.py
   │   └── main.py
   ├── data
   │   └── training
   │       └── priority_training_data.csv
   ├── docs
   │   └── document-processing-code-context.md
-  ├── ml
-  │   ├── feature_extractor.py
-  │   ├── ml_service.py
-  │   ├── model.pkl
-  │   └── train_model.py
   ├── scripts
   │   ├── debug_classification.py
   │   ├── generate-code-context.py
+  │   ├── test_document_parse_api.py
   │   ├── test_document_pipeline.py
   │   ├── test_farmer_integration.py
   │   ├── test_intelligence_integration.py
   │   ├── test_intelligence_layer.py
   │   ├── test_intelligence_pipeline.py
   │   └── train_priority_model.py
+  ├── __init__.py
   ├── debug_amount.py
   ├── debug_structure.py
+  ├── Dockerfile
   ├── nixpacks.toml
   ├── README.md
   ├── requirements.txt

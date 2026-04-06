@@ -37,12 +37,11 @@ class DocumentProcessingService:
     
     def __init__(self):
         # CRITICAL: Ensure runtime is ready before initializing services
+        self.logger = logging.getLogger(__name__)
         try:
-            logger = logging.getLogger(__name__)
             get_runtime_health()
         except Exception as e:
-            logger = logging.getLogger(__name__)
-            logger.error(f"[HEALTH] Runtime not ready: {e}")
+            self.logger.error(f"[HEALTH] Runtime not ready: {e}")
             raise RuntimeError(f"Document processing service cannot start: {e}")
         
         # Initialize rebuilt services
@@ -58,25 +57,31 @@ class DocumentProcessingService:
         # Lazy OCR service initialization - only when needed
         self._ocr_service = None
         self.paddle_ocr_service = None
-        self.logger = logging.getLogger(__name__)
 
-        # Initialize Granite extraction service with graceful degradation
+        # Initialize Docling ingestion service (primary ingestion layer)
         try:
-            granite_endpoint = os.getenv("GRANITE_ENDPOINT")
+            from app.modules.document_processing.docling_ingestion_service import DoclingIngestionService
+            self.docling_service = DoclingIngestionService()
+            self.logger.info("[INIT] Docling ingestion service initialized successfully")
+        except Exception as e:
+            self.logger.warning(f"[INIT] Docling service initialization failed: {e}")
+            self.logger.warning("[INIT] Docling may not be available - install docling package if needed")
+            self.docling_service = None
+
+        # Initialize Granite extraction service (lightweight V2 - no external deps)
+        try:
             self.use_granite = os.getenv("USE_GRANITE", "true").lower() == "true"
             
-            if granite_endpoint and self.use_granite:
-                self.granite_service = GraniteExtractionService(granite_endpoint)
-                logger.info("[INIT] Granite extraction service initialized successfully")
+            if self.use_granite:
+                from app.modules.document_processing.granite_extraction_service_v2 import GraniteExtractionServiceV2
+                self.granite_service = GraniteExtractionServiceV2()
+                self.logger.info("[INIT] Granite extraction service V2 (lightweight) initialized successfully")
             else:
-                if not granite_endpoint:
-                    logger.info("[INIT] Granite: disabled (no endpoint configured)")
-                if not self.use_granite:
-                    logger.info("[INIT] USE_GRANITE=false - Granite service disabled")
+                self.logger.info("[INIT] USE_GRANITE=false - Granite disabled by config")
                 self.granite_service = None
         except Exception as e:
-            logger.error(f"[INIT] Granite service initialization failed: {e}")
-            logger.info("[INIT] Will fall back to traditional extraction logic")
+            self.logger.error(f"[INIT] Granite service initialization failed: {e}")
+            self.logger.info("[INIT] Granite service will NOT be available - proceeding with traditional extraction")
             self.granite_service = None
 
     def _get_ocr_service(self):
@@ -303,7 +308,7 @@ class DocumentProcessingService:
             raise ValueError("Granite service not available")
         
         try:
-            # Step 1: Docling ingestion
+            # Step 1: Docling ingestion - primary text acquisition
             logger.info(f"[DOCLING] Starting ingestion for {filename}")
             docling_output = self.docling_service.ingest_document(file_data, filename)
             
@@ -314,25 +319,37 @@ class DocumentProcessingService:
             docling_text = docling_output.get('raw_text', '')
             logger.info(f"[DOCLING] success for {filename}: {len(docling_text)} chars")
 
+            # Step 1.5: OCR fallback if Docling text is poor quality
             if self._is_text_quality_poor(docling_text):
-                logger.warning(f"[OCR] fallback used for {filename}")
+                logger.warning(f"[OCR] Docling text quality poor for {filename}, trying OCR fallback")
                 try:
                     ocr_text = self._extract_text_from_file(file_data, filename)
                     if not ocr_text.strip() or self._is_text_quality_poor(ocr_text):
                         raise ValueError("OCR fallback produced poor text")
                     docling_output = self._merge_docling_and_ocr_output(docling_output, ocr_text)
-                    logger.info(f"[PIPELINE] final text length: {len(docling_output.get('raw_text', ''))}")
+                    logger.info(f"[PIPELINE] OCR fallback successful, final text length: {len(docling_output.get('raw_text', ''))}")
                 except Exception as ocr_error:
-                    logger.error(f"[OCR] failed for {filename}: {ocr_error}")
-                    failure_payload = self._create_processing_failure_payload(
-                        filename,
-                        str(ocr_error),
-                        "OCR_FAILURE"
-                    )
-                    return failure_payload
+                    logger.error(f"[OCR] fallback failed for {filename}: {ocr_error}, continuing with Docling text")
+                    # Don't fail, continue with Docling text as-is
             
-            # Step 2: Granite extraction
-            logger.info(f"[GRANITE] Starting extraction for {filename}")
+            # Step 2: Document type identification (before Granite enrichment)
+            logger.info(f"[CLASSIFY] Identifying document type for {filename}")
+            try:
+                classification_result = self.classification_service.classify(docling_text, filename)
+                identified_doc_type = classification_result.get('document_type', 'unknown')
+                classification_confidence = classification_result.get('confidence', 0.0)
+                logger.info(f"[CLASSIFY] Pre-identified as {identified_doc_type} (confidence: {classification_confidence})")
+                
+                # Add identified type to Docling output for Granite context
+                docling_output['pre_identified_type'] = identified_doc_type
+                docling_output['pre_identification_confidence'] = classification_confidence
+            except Exception as classify_error:
+                logger.warning(f"[CLASSIFY] Pre-identification failed: {classify_error}, Granite will classify independently")
+                docling_output['pre_identified_type'] = 'unknown'
+                docling_output['pre_identification_confidence'] = 0.0
+            
+            # Step 3: Granite semantic extraction - uses both text and pre-identification
+            logger.info(f"[GRANITE] Starting semantic extraction for {filename}")
             granite_output = self.granite_service.extract_with_granite(docling_output)
             
             # Validate Granite output
@@ -341,18 +358,21 @@ class DocumentProcessingService:
             
             logger.info(f"[GRANITE] Extraction complete: {granite_output.get('document_type', 'unknown')}")
             
-            # Add processing metadata
+            # Add processing metadata with full pipeline info
             granite_output['processing_metadata'] = {
                 'pipeline': 'docling_granite',
+                'parser': 'docling',
                 'docling_available': True,
                 'granite_available': True,
                 'file_type': docling_output.get('metadata', {}).get('file_type', 'unknown'),
                 'docling_text_length': len(docling_output.get('raw_text', '')),
                 'has_tables': len(docling_output.get('tables', [])) > 0,
-                'has_sections': len(docling_output.get('sections', [])) > 0
+                'has_sections': len(docling_output.get('sections', [])) > 0,
+                'pre_identified_type': docling_output.get('pre_identified_type', 'unknown'),
+                'pre_identification_confidence': docling_output.get('pre_identification_confidence', 0.0)
             }
 
-            logger.info(f"[PIPELINE] final text length: {len(docling_output.get('raw_text', ''))}")
+            logger.info(f"[PIPELINE] Final extraction complete - document_type={granite_output.get('document_type', 'unknown')}, confidence={granite_output.get('confidence', 0.0)}")
             
             return granite_output
             
@@ -362,16 +382,31 @@ class DocumentProcessingService:
     
     def _should_use_docling_granite(self, filename: str) -> bool:
         """
-        Determine if enhanced pipeline should be used for this file
+        Determine if enhanced Docling+Granite pipeline should be used for this file
         
         Args:
             filename: Original filename
             
         Returns:
-            False - using PyMuPDF/OCR pipeline instead
+            True if Docling+Granite pipeline should be used for production processing
         """
-        # Disabled - using PyMuPDF/OCR pipeline exclusively
-        return False
+        # Check if services are available
+        if not self.docling_service or not self.granite_service:
+            return False
+        
+        # Check file extension
+        if not filename:
+            return False
+        
+        file_ext = filename.lower().split('.')[-1] if '.' in filename.lower() else ''
+        
+        # Supported file types for Docling+Granite pipeline
+        supported_extensions = {
+            'pdf', 'docx', 'doc', 'jpg', 'jpeg', 'png', 'tiff', 'bmp', 'txt'
+        }
+        
+        # Enable for supported file types in production
+        return file_ext in supported_extensions
     
     def _create_processing_failure_payload(self, filename: str, error_message: str, failure_type: str = "PROCESSING_FAILURE") -> Dict[str, Any]:
         """

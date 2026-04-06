@@ -5,12 +5,16 @@ Purpose: FastAPI router for document processing functionality
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from typing import Optional, List, Dict, Any
 from pathlib import Path
+import time
 
 from app.modules.document_processing.service_schema import DocumentProcessingRequest, DocumentProcessingResult
 from app.modules.document_processing.document_processing_service import DocumentProcessingService
 
 router = APIRouter()
 doc_service = DocumentProcessingService()
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 @router.post("/process", response_model=DocumentProcessingResult)
@@ -22,21 +26,41 @@ async def process_document(
     """
     Process uploaded document
     
+    STRICT PIPELINE:
+    1. Upload document
+    2. Identify document type (Hindi/English/Marathi/mixed)
+    3. Docling ingestion (primary parser)
+    4. OCR fallback (only if text quality poor)
+    5. Granite semantic extraction (mandatory)
+    6. Return structured response
+    
     Args:
         file: Document file to process
         processing_type: Type of processing to apply
         options: Additional processing options
     
     Returns:
-        DocumentProcessingResult: Processing results
+        DocumentProcessingResult: Processing results with:
+        - document_type
+        - structured_data
+        - extracted_fields
+        - ai_summary
+        - confidence scores
     """
+    request_start = time.time()
+    
     try:
         # Validate file content type
-        if file.content_type and not file.content_type.startswith(('image/', 'application/pdf', 'text/', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')):
+        valid_types = ('image/', 'application/pdf', 'text/', 
+                      'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+        if file.content_type and not file.content_type.startswith(valid_types):
             raise HTTPException(status_code=400, detail="Unsupported file type")
         
         file_content = await file.read()
         
+        logger.info(f"[ROUTER] Processing file: {file.filename} ({len(file_content)} bytes)")
+        
+        # Call document processing service with strict pipeline
         result = await doc_service.process_document(
             file_content,
             file.filename,
@@ -44,12 +68,62 @@ async def process_document(
             options or {}
         )
         
+        processing_time = int((time.time() - request_start) * 1000)
+        result.processing_time_ms = processing_time
+        
+        logger.info(f"[ROUTER] File processed: {file.filename} - type={result.data.get('document_type') if result.data else 'N/A'} in {processing_time}ms")
+        
         return result
         
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"[ROUTER] Document processing failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Document processing failed: {str(e)}")
+
+
+@router.post("/classify")
+async def classify_document(
+    file: UploadFile = File(...)
+):
+    """
+    Classify document type without full extraction
+    Returns: {document_type, confidence}
+    """
+    try:
+        file_content = await file.read()
+        logger.info(f"[ROUTER] Classifying file: {file.filename}")
+        
+        # Use classification service directly
+        from app.modules.document_processing.classification_service import DocumentClassificationService
+        from app.modules.document_processing.docling_ingestion_service import DoclingIngestionService
+        
+        # First get text via Docling
+        docling_service = DoclingIngestionService()
+        docling_output = docling_service.ingest_document(file_content, file.filename)
+        raw_text = docling_output.get('raw_text', '')
+        
+        # Then classify
+        classifier = DocumentClassificationService()
+        result = classifier.classify(raw_text, file.filename)
+        
+        logger.info(f"[ROUTER] Classified as: {result.get('document_type')}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"[ROUTER] Classification failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Classification failed: {str(e)}")
+
+
+@router.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "ok",
+        "service": "Document Processing",
+        "version": "1.0.0"
+    }
+
 
 
 @router.post("/process-from-metadata", response_model=DocumentProcessingResult)

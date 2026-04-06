@@ -1,6 +1,6 @@
 # PROJECT_BRAIN
 
-Generated: 2026-04-06T07:46:33.825Z
+Generated: 2026-04-06T15:20:39.142Z
 
 ## Purpose
 
@@ -8,11 +8,16 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 
 ## ai-services/app
 
+### __init__.py
+
+- Path: `ai-services/app/__init__.py`
+- Summary: No top-level summary comment found.
+
 ### main.py
 
 - Path: `ai-services/app/main.py`
 - Summary: FastAPI Main Application Purpose: Initialize and configure the AI services microservice
-- Exports/Defines: get_allowed_origins, startup_event, shutdown_event, root, health_check
+- Exports/Defines: get_allowed_origins, get_allowed_origin_regex, startup_event, shutdown_event, root
 
 ## ai-services/app/api
 
@@ -42,6 +47,38 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 - Summary: Simple LLM Client for Agricultural Document Processing This client provides a simple interface to transformer-based models for generating AI analysis and insights.
 - Exports/Defines: LLMClient, __init__, _initialize_model, generate_response
 
+## ai-services/app/ml
+
+### __init__.py
+
+- Path: `ai-services/app/ml/__init__.py`
+- Summary: No top-level summary comment found.
+
+### feature_extractor.py
+
+- Path: `ai-services/app/ml/feature_extractor.py`
+- Summary: !/usr/bin/env python3
+- Exports/Defines: FeatureExtractor, __init__, extract_features
+
+### ml_service.py
+
+- Path: `ai-services/app/ml/ml_service.py`
+- Summary: !/usr/bin/env python3
+- Exports/Defines: MLService, __init__, analyze_document
+
+### train_model.py
+
+- Path: `ai-services/app/ml/train_model.py`
+- Summary: !/usr/bin/env python3
+- Exports/Defines: RandomForestModel, __init__, create_training_data
+
+## ai-services/app/modules
+
+### __init__.py
+
+- Path: `ai-services/app/modules/__init__.py`
+- Summary: No top-level summary comment found.
+
 ## ai-services/app/modules/ai_assist
 
 ### llm_assist_service.py
@@ -61,7 +98,7 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 ### __init__.py
 
 - Path: `ai-services/app/modules/document_processing/__init__.py`
-- Summary: Document Processing Module Purpose: Document processing and analysis services
+- Summary: No top-level summary comment found.
 
 ### candidate_extraction_engine.py
 
@@ -75,6 +112,12 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 - Summary: Document Classification Service Purpose: Clean rule-based agricultural document classifier with standardized output
 - Exports/Defines: DocumentClassificationService, __init__
 
+### docling_ingestion_service.py
+
+- Path: `ai-services/app/modules/document_processing/docling_ingestion_service.py`
+- Summary: Docling Ingestion Service Purpose: Primary document conversion layer using Docling for structured extraction
+- Exports/Defines: DoclingIngestionService, __init__, _check_docling_availability, _get_docling_converter
+
 ### document_processing_router.py
 
 - Path: `ai-services/app/modules/document_processing/document_processing_router.py`
@@ -85,7 +128,7 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 
 - Path: `ai-services/app/modules/document_processing/document_processing_service.py`
 - Summary: Document Processing Service Purpose: Clean orchestration layer over rebuilt schema, classifier, extraction service, and processor
-- Exports/Defines: DocumentProcessingService, __init__, _safe_dict, _safe_list, _safe_str, _safe_number
+- Exports/Defines: DocumentProcessingService, __init__
 
 ### document_schemas.py
 
@@ -123,6 +166,18 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 - Summary: Generic Field Extractor Purpose: Extract common agricultural document fields using label-aware and boundary-aware parsing Works as a shared extractor for common fields across all document types
 - Exports/Defines: GenericFieldExtractor, __init__, extract_fields
 
+### granite_docling_service.py
+
+- Path: `ai-services/app/modules/document_processing/granite_docling_service.py`
+- Summary: Document Ingestion Service Purpose: Document parsing using PyMuPDF + OCR with stable dependency stack
+- Exports/Defines: GraniteDoclingService, __init__, _check_ocr_availability, _resolve_tesseract_binary
+
+### granite_extraction_service.py
+
+- Path: `ai-services/app/modules/document_processing/granite_extraction_service.py`
+- Summary: Granite Extraction Service Purpose: Semantic extraction and reasoning layer using Granite model
+- Exports/Defines: GraniteExtractionService, __init__, _build_schema_safe_payload, _ensure_schema_compliance
+
 ### layout_analyzer.py
 
 - Path: `ai-services/app/modules/document_processing/layout_analyzer.py`
@@ -140,6 +195,12 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 - Path: `ai-services/app/modules/document_processing/money_extraction_validator.py`
 - Summary: Strict Money Extraction Validator Purpose: Validates financial field extraction with strict rules to prevent: - Wrong amounts from being extracted - Reference IDs being confused with amounts - Years being extracted as amounts - Aadhaar/Phone numbers being extracted as amounts - Truncated or malformed amounts Key rule: Money extraction MUST have explicit financial context
 - Exports/Defines: MoneyExtractionValidator
+
+### paddle_ocr_service.py
+
+- Path: `ai-services/app/modules/document_processing/paddle_ocr_service.py`
+- Summary: PaddleOCR Service for Image OCR Purpose: Dedicated service for PaddleOCR-based image text extraction
+- Exports/Defines: PaddleOCRService, __init__, _get_engine, extract_text_from_image_bytes
 
 ### predictive_analytics.py
 
@@ -162,8 +223,8 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 ### runtime_health.py
 
 - Path: `ai-services/app/modules/document_processing/runtime_health.py`
-- Summary: Runtime Health Check Module Purpose: Ensure all required dependencies are available at startup
-- Exports/Defines: RuntimeHealthChecker, __init__, check_python_dependencies
+- Summary: Runtime Health Check Module Purpose: Ensure document processing runtime is available without treating OCR or Granite as hard failures.
+- Exports/Defines: RuntimeHealthChecker, get_tessdata_prefix, get_tesseract_config, resolve_tesseract_binary, get_available_tesseract_languages, __init__
 
 ### semantic_extractor.py
 
@@ -249,7 +310,7 @@ This file is an auto-generated project summary for quickly bootstrapping a new A
 ### __init__.py
 
 - Path: `ai-services/app/modules/document_processing/schema/__init__.py`
-- Summary: Document Processing Schemas Purpose: Schema definitions for document processing
+- Summary: No top-level summary comment found.
 
 ### document_classification.py
 
