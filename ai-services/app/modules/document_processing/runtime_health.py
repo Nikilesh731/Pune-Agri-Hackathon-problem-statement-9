@@ -6,6 +6,7 @@ import logging
 import sys
 import subprocess
 import os
+import shutil
 from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -88,57 +89,28 @@ class RuntimeHealthChecker:
         """Check if system binaries are available"""
         checks = {}
         
-        # Check Tesseract binary with enhanced Railway detection
-        tesseract_found = False
-        tesseract_version = None
+        # CRITICAL: Force verify Tesseract binary with shutil.which()
+        tesseract_path = shutil.which("tesseract")
         
-        # Method 1: Check PATH directly
+        if not tesseract_path:
+            raise RuntimeError("Tesseract binary NOT found in runtime")
+        
+        logger.info(f"[HEALTH] Tesseract found at: {tesseract_path}")
+        checks['tesseract_binary'] = True
+        
+        # Additional verification - try to get version
         try:
-            result = subprocess.run(['which', 'tesseract'], 
-                                  capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                tesseract_path = result.stdout.strip()
-                checks['tesseract_binary'] = True
-                tesseract_found = True
-                logger.info(f"[HEALTH] Tesseract binary found via which: {tesseract_path}")
-                
-                # Get version info
-                version_result = subprocess.run([tesseract_path, '--version'], 
-                                              capture_output=True, text=True, timeout=10)
-                if version_result.returncode == 0:
-                    version_line = version_result.stdout.split('\n')[0] if version_result.stdout else ''
-                    tesseract_version = version_line
-                    logger.info(f"[HEALTH] Tesseract version: {version_line}")
-                else:
-                    logger.warning("[HEALTH] Could not get Tesseract version")
+            version_result = subprocess.run([tesseract_path, '--version'], 
+                                          capture_output=True, text=True, timeout=10)
+            if version_result.returncode == 0:
+                version_line = version_result.stdout.split('\n')[0] if version_result.stdout else ''
+                logger.info(f"[HEALTH] Tesseract version: {version_line}")
             else:
-                logger.warning("[HEALTH] 'which tesseract' failed, trying direct check")
+                logger.warning("[HEALTH] Could not get Tesseract version")
         except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
-            logger.debug(f"[HEALTH] which tesseract failed: {e}")
+            logger.warning(f"[HEALTH] Tesseract version check failed: {e}")
         
-        # Method 2: Direct PATH check (fallback)
-        if not tesseract_found:
-            try:
-                result = subprocess.run(['tesseract', '--version'], 
-                                      capture_output=True, text=True, timeout=10)
-                if result.returncode == 0:
-                    checks['tesseract_binary'] = True
-                    tesseract_found = True
-                    version_line = result.stdout.split('\n')[0] if result.stdout else ''
-                    tesseract_version = version_line
-                    logger.info(f"[HEALTH] Tesseract binary found in PATH: {version_line}")
-                else:
-                    checks['tesseract_binary'] = False
-                    logger.warning("[HEALTH] Tesseract binary not found or not working")
-            except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
-                checks['tesseract_binary'] = False
-                logger.warning(f"[HEALTH] Tesseract binary check failed: {e}")
-        
-        # Store Tesseract info for health reporting
-        if tesseract_found:
-            logger.info("[HEALTH] Image OCR: READY")
-        else:
-            logger.warning("[HEALTH] Image OCR: UNAVAILABLE - Tesseract binary not found")
+        logger.info("[HEALTH] Image OCR: READY")
         
         return checks
     
@@ -228,6 +200,10 @@ def ensure_runtime_ready() -> None:
     health = _runtime_checker.run_full_health_check()
     if health['overall_status'] != 'healthy':
         _runtime_checker.fail_if_missing_critical()
+    
+    # CRITICAL: Hard fail on missing Tesseract OCR - no degraded mode in production
+    if not health['system_binaries'].get('tesseract_binary', False):
+        raise RuntimeError("Critical dependency missing: Tesseract OCR not available")
 
 # Auto-run health check when module is imported
 if __name__ != "__main__":

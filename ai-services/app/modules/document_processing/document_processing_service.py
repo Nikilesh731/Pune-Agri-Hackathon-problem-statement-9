@@ -1560,6 +1560,10 @@ class DocumentProcessingService:
         import logging
         logger = logging.getLogger(__name__)
         
+        # CRITICAL DEBUG: Log Tesseract binary path before OCR
+        import shutil
+        logger.info(f"[DEBUG OCR] which tesseract: {shutil.which('tesseract')}")
+        
         try:
             import PIL.Image
             import pytesseract
