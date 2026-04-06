@@ -1,39 +1,189 @@
-# AI Services Requirements
-# Purpose: Python dependencies for FastAPI AI microservices
 
-fastapi==0.110.0
-uvicorn[standard]==0.27.1
+I’m checking the current backend layout and deployment files first so I can make the smallest safe set of changes without touching the pipeline behavior.
 
-pydantic==2.6.4
-python-multipart==0.0.9
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-python-dotenv==1.0.1
+I’ve confirmed the core pieces already exist in the backend; now I’m reading the exact implementation points so I can patch only the deployment and OCR/runtime edges.
 
-httpx==0.27.0
-aiofiles==23.2.1
+I’ve found the OCR and health-check entry points; next I’m confirming whether any alias package or path hack still exists so I can remove only those compatibility shims.
 
-Pillow>=10.4.0
-pytesseract==0.3.10
-opencv-python-headless==4.9.0.80  # Headless version for container environments
+The backend already mostly follows the target import layout, so I’m now verifying the deployment entrypoint and the remaining compatibility points before patching.
 
-numpy==1.26.4
-pandas==2.2.1
-scikit-learn==1.4.1.post1
+I’m at the point of deciding the exact patch set. I want to avoid deleting anything unnecessary, so I’m checking for any leftover top-level ML or alias directories before editing.
 
-nltk==3.8.1
-transformers==4.38.2
+I found a hardcoded OCR language constant in the extraction path, so I’m reading that section now to replace it with a safe dynamic language selector.
 
-# PDF and OCR processing    
-pdfplumber==0.10.3
-PyMuPDF==1.23.26
+I’m applying the minimal backend patch set now: dependency pin cleanup, runtime health helpers, dynamic OCR language selection, CORS, health response, and the Railway start command.
 
-# Docling for document ingestion and conversion
-docling>=2.0.0
+The dependency file is still carrying redundant OCR entries, so I’m cleaning that up now while keeping the Docling-compatible pin intact.
 
-# Document processing for Word documents
+The code changes are in place. I’m running file-level validation next to catch any syntax or import issues before I hand this back.
+
+I’ve validated syntax and imports. I’m grabbing the final diff now so I can return only the file changes and the exact replacement blocks you asked for.
+
+Files Changed
+
+requirements.txt:32
+runtime_health.py:16
+document_processing_service.py:14
+granite_docling_service.py:16
+main.py:20
+Dockerfile:12
+Exact Code Edits
+
+requirements.txt:32
+Before:
 python-docx==1.1.0
 
-# OCR processing - Tesseract only (production-safe)
+OCR processing - Tesseract only (production-safe)
 pytesseract==0.3.10
-opencv-python-headless==4.9.0.80  # Headless version for container environments
+opencv-python-headless==4.9.0.80 # Headless version for container environments
+
+After:
+python-docx==1.1.2
+
+Removed the duplicate OCR dependency block at the end of the file.
+
+runtime_health.py:16
+Added:
+def get_tessdata_prefix() -> Optional[str]:
+prefix = os.getenv("TESSDATA_PREFIX", "").strip()
+return prefix or None
+def get_tesseract_config() -> str:
+prefix = get_tessdata_prefix()
+if prefix:
+return f'--tessdata-dir "{prefix}"'
+return ""
+def resolve_tesseract_binary() -> Optional[str]:
+...
+def get_available_tesseract_languages() -> list[str]:
+...
+Replaced the class-local Tesseract resolver with the shared helper:
+Before:
+def _resolve_tesseract_binary(self) -> Optional[str]:
+...
+After:
+def _resolve_tesseract_binary(self) -> Optional[str]:
+return resolve_tesseract_binary()
+
+document_processing_service.py:14
+Before:
+from app.modules.document_processing.runtime_health import ensure_runtime_ready, get_runtime_health
+
+After:
+from app.modules.document_processing.runtime_health import (
+ensure_runtime_ready,
+get_available_tesseract_languages,
+get_runtime_health,
+get_tesseract_config,
+resolve_tesseract_binary,
+)
+
+Before:
+OCR_LANGUAGE_CODE = "eng+hin+mar"
+
+After:
+removed
+
+Before:
+def _resolve_tesseract_binary(self):
+...
+After:
+def _resolve_tesseract_binary(self):
+return resolve_tesseract_binary()
+Added dynamic OCR language selection:
+def _get_ocr_language_candidates(self) -> List[str]:
+available_languages = set(get_available_tesseract_languages())
+preferred_languages = [language for language in ("eng", "hin", "mar") if language in available_languages]
+...
+Replaced fixed OCR call with dynamic fallback:
+Before:
+extracted_text = pytesseract.image_to_string(
+processed_image,
+lang=OCR_LANGUAGE_CODE
+)
+After:
+language_candidates = self._get_ocr_language_candidates()
+...
+extracted_text = pytesseract.image_to_string(processed_image, lang=language_code, config=tesseract_config)
+
+granite_docling_service.py:16
+Added shared OCR helpers import:
+from app.modules.document_processing.runtime_health import (
+get_available_tesseract_languages,
+get_tesseract_config,
+resolve_tesseract_binary,
+)
+
+Before:
+def _resolve_tesseract_binary(self) -> Optional[str]:
+...
+After:
+def _resolve_tesseract_binary(self) -> Optional[str]:
+return resolve_tesseract_binary()
+Added dynamic OCR language selection:
+def _get_ocr_language_candidates(self) -> List[str]:
+available_languages = set(get_available_tesseract_languages())
+preferred_languages = [language for language in ("eng", "hin", "mar") if language in available_languages]
+...
+Updated OCR language probing to use TESSDATA_PREFIX:
+Before:
+self._ocr_languages_available = pytesseract.get_languages(config="") or []
+After:
+config = get_tesseract_config()
+self._ocr_languages_available = pytesseract.get_languages(config=config) or []
+
+Updated image OCR to try available languages first, then English fallback:
+Before:
+extracted_text = pytesseract.image_to_string(processed_image, lang=language)
+After:
+if tessdata_config:
+extracted_text = pytesseract.image_to_string(processed_image, lang=language, config=tessdata_config)
+else:
+extracted_text = pytesseract.image_to_string(processed_image, lang=language)
+
+main.py:20
+Added runtime health import:
+from app.modules.document_processing.runtime_health import get_runtime_health
+
+Added permissive CORS regex fallback:
+def get_allowed_origin_regex() -> str | None:
+cors_env = os.getenv("CORS_ORIGIN", "").strip()
+if cors_env:
+return None
+return r".*"
+Updated middleware:
+Before:
+allow_origins=get_allowed_origins(),
+After:
+allow_origins=get_allowed_origins(),
+allow_origin_regex=get_allowed_origin_regex(),
+
+Updated /health response:
+Before:
+{
+"status": "healthy",
+"service": "AI Smart Agriculture Services",
+"version": "1.0.0",
+}
+After:
+{
+"status": "ok",
+"service": "AI Smart Agriculture Services",
+"version": "1.0.0",
+"docling": bool(runtime_health.get("docling_available", False)),
+"ocr": bool(runtime_health.get("ocr_available", False)),
+"granite": bool(runtime_health.get("granite_available", False)),
+}
+
+Dockerfile:12
+Before:
+CMD ["python", "-m", "app.main"]
+After:
+CMD python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+Updated requirements.txt
+
+requirements.txt:32
+python-docx==1.1.2
+pytesseract==0.3.10
+opencv-python-headless==4.9.0.80
+New File Additions

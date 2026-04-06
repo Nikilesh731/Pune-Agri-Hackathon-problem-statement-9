@@ -13,6 +13,59 @@ logger = logging.getLogger(__name__)
 DEFAULT_WINDOWS_TESSERACT = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 
+def get_tessdata_prefix() -> Optional[str]:
+    prefix = os.getenv("TESSDATA_PREFIX", "").strip()
+    return prefix or None
+
+
+def get_tesseract_config() -> str:
+    prefix = get_tessdata_prefix()
+    if prefix:
+        return f'--tessdata-dir "{prefix}"'
+    return ""
+
+
+def resolve_tesseract_binary() -> Optional[str]:
+    try:
+        import pytesseract
+
+        configured_cmd = (
+            os.getenv("TESSERACT_CMD", "").strip()
+            or getattr(pytesseract.pytesseract, "tesseract_cmd", "")
+            or shutil.which("tesseract")
+        )
+        if configured_cmd:
+            pytesseract.pytesseract.tesseract_cmd = configured_cmd
+            pytesseract.get_tesseract_version()
+            return configured_cmd
+    except Exception:
+        pass
+
+    if os.name == "nt" and os.path.exists(DEFAULT_WINDOWS_TESSERACT):
+        try:
+            import pytesseract
+
+            pytesseract.pytesseract.tesseract_cmd = DEFAULT_WINDOWS_TESSERACT
+            pytesseract.get_tesseract_version()
+            return DEFAULT_WINDOWS_TESSERACT
+        except Exception:
+            return None
+
+    return None
+
+
+def get_available_tesseract_languages() -> list[str]:
+    try:
+        import pytesseract
+
+        if not resolve_tesseract_binary():
+            return []
+        languages = pytesseract.get_languages(config=get_tesseract_config()) or []
+        return [language for language in languages if language]
+    except Exception:
+        return []
+
+
 class RuntimeHealthChecker:
     """Check availability of document-processing runtime dependencies."""
 
@@ -36,28 +89,7 @@ class RuntimeHealthChecker:
         return bool(use_granite and granite_endpoint)
 
     def _resolve_tesseract_binary(self) -> Optional[str]:
-        try:
-            import pytesseract
-
-            current_cmd = getattr(pytesseract.pytesseract, "tesseract_cmd", "") or shutil.which("tesseract")
-            if current_cmd:
-                pytesseract.pytesseract.tesseract_cmd = current_cmd
-                pytesseract.get_tesseract_version()
-                return current_cmd
-        except Exception:
-            pass
-
-        if os.path.exists(DEFAULT_WINDOWS_TESSERACT):
-            try:
-                import pytesseract
-
-                pytesseract.pytesseract.tesseract_cmd = DEFAULT_WINDOWS_TESSERACT
-                pytesseract.get_tesseract_version()
-                return DEFAULT_WINDOWS_TESSERACT
-            except Exception:
-                return None
-
-        return None
+        return resolve_tesseract_binary()
 
     def check_python_dependencies(self) -> Dict[str, bool]:
         """Check if Python packages are importable."""
@@ -66,10 +98,10 @@ class RuntimeHealthChecker:
         checks["docling"] = self._check_docling_available()
 
         try:
-            import pytesseract
+            import pytesseract  # noqa: F401
 
             checks["pytesseract"] = True
-        except Exception as exc:
+        except Exception:
             checks["pytesseract"] = False
 
         try:

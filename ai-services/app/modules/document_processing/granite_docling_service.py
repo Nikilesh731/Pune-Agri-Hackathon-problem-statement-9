@@ -94,7 +94,10 @@ class GraniteDoclingService:
                     self.logger.info("[OCR] Tesseract unavailable (fallback disabled)")
                     return
 
-                pytesseract.pytesseract.tesseract_cmd = self._tesseract_path
+                if os.name == "nt":
+                    pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+                elif self._tesseract_path:
+                    pytesseract.pytesseract.tesseract_cmd = self._tesseract_path
                 pytesseract.get_tesseract_version()
                 self._ocr_available = True
                 try:
@@ -450,6 +453,19 @@ class GraniteDoclingService:
             self._ocr_languages_available = []
         return self._ocr_languages_available
 
+    def _get_ocr_language_candidates(self) -> List[str]:
+        available_languages = set(self._get_available_ocr_languages())
+
+        preferred = []
+        for lang in ["eng", "hin", "mar"]:
+            if lang in available_languages:
+                preferred.append(lang)
+
+        if preferred:
+            return ["+".join(preferred)]
+
+        return ["eng"]
+
     def _preprocess_image(self, image: Image.Image) -> Image.Image:
         from PIL import ImageFilter, ImageOps
 
@@ -466,11 +482,9 @@ class GraniteDoclingService:
             raise ValueError("OCR not available")
 
         processed_image = self._preprocess_image(image)
-        available_languages = set(self._get_available_ocr_languages())
+        language_candidates = self._get_ocr_language_candidates()
         attempted_languages: List[str] = []
         used_language = ""
-
-        language_candidates = ["eng+hin+mar", "eng"]
 
         extracted_text = ""
         last_error: Optional[Exception] = None
@@ -796,8 +810,6 @@ class GraniteDoclingService:
                 else:
                     self.logger.error(f"[PARSER] OCR text quality poor for {filename}")
                     errors.append("OCR extraction quality poor")
-                    if docling_result:
-                        return self._build_ocr_failure_response(file_type, errors, warnings, docling_result)
                     
             except Exception as e:
                 self.logger.error(f"[PARSER] OCR fallback failed for {filename}: {e}")

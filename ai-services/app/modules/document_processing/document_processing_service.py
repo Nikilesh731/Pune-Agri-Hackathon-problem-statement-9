@@ -9,7 +9,13 @@ import os
 import logging
 
 # Runtime health check - CRITICAL for production stability
-from app.modules.document_processing.runtime_health import ensure_runtime_ready, get_runtime_health
+from app.modules.document_processing.runtime_health import (
+    ensure_runtime_ready,
+    get_available_tesseract_languages,
+    get_runtime_health,
+    get_tesseract_config,
+    resolve_tesseract_binary,
+)
 
 from app.modules.document_processing.service_schema import DocumentProcessingRequest, DocumentProcessingResult
 from app.modules.document_processing.classification_service import DocumentClassificationService
@@ -23,8 +29,6 @@ from app.modules.document_processing.workflow_service import WorkflowService
 from app.modules.document_processing.docling_ingestion_service import DoclingIngestionService
 from app.modules.document_processing.granite_extraction_service import GraniteExtractionService
 from app.ml.ml_service import analyze_document_risk
-
-OCR_LANGUAGE_CODE = "eng+hin+mar"
 
 ML_SERVICE_AVAILABLE = True
 
@@ -187,28 +191,21 @@ class DocumentProcessingService:
 
     def _resolve_tesseract_binary(self):
         """Resolve a usable Tesseract binary path for OCR fallback."""
-        import pytesseract
-        import shutil
+        return resolve_tesseract_binary()
 
-        current_path = getattr(pytesseract.pytesseract, "tesseract_cmd", "") or shutil.which("tesseract")
-        if current_path:
-            try:
-                pytesseract.pytesseract.tesseract_cmd = current_path
-                pytesseract.get_tesseract_version()
-                return current_path
-            except Exception:
-                pass
+    def _get_ocr_language_candidates(self) -> List[str]:
+        available_languages = set(get_available_tesseract_languages())
+        preferred_languages = [language for language in ("eng", "hin", "mar") if language in available_languages]
 
-        windows_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-        if os.path.exists(windows_path):
-            try:
-                pytesseract.pytesseract.tesseract_cmd = windows_path
-                pytesseract.get_tesseract_version()
-                return windows_path
-            except Exception:
-                return None
+        if preferred_languages:
+            candidates = ["+".join(preferred_languages)]
+        else:
+            candidates = ["eng"]
 
-        return None
+        if "eng" not in preferred_languages:
+            candidates.append("eng")
+
+        return list(dict.fromkeys(candidates))
 
     def _build_canonical_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -2238,14 +2235,42 @@ class DocumentProcessingService:
                 processed_image = gray_image.point(lambda x: 0 if x < 128 else 255, mode='1')
 
             try:
-                extracted_text = pytesseract.image_to_string(
-                    processed_image,
-                    lang=OCR_LANGUAGE_CODE
-                )
-                logger.info(f"[OCR] OCR completed for {filename} using {OCR_LANGUAGE_CODE}")
+                tesseract_config = get_tesseract_config()
+                language_candidates = self._get_ocr_language_candidates()
+
+                extracted_text = ""
+                selected_language = ""
+                last_language_error = None
+
+                for language_code in language_candidates:
+                    try:
+                        if tesseract_config:
+                            extracted_text = pytesseract.image_to_string(
+                                processed_image,
+                                lang=language_code,
+                                config=tesseract_config,
+                            )
+                        else:
+                            extracted_text = pytesseract.image_to_string(
+                                processed_image,
+                                lang=language_code,
+                            )
+                        selected_language = language_code
+                        break
+                    except Exception as lang_error:
+                        last_language_error = lang_error
+                        logger.warning(f"[OCR] OCR failed with {language_code}, trying fallback: {lang_error}")
+
+                if not extracted_text.strip() and last_language_error is not None:
+                    raise last_language_error
+
+                logger.info(f"[OCR] OCR completed for {filename} using {selected_language or 'eng'}")
             except Exception as lang_error:
-                logger.warning(f"[OCR] OCR failed with {OCR_LANGUAGE_CODE}, falling back to English only: {lang_error}")
-                extracted_text = pytesseract.image_to_string(processed_image, lang="eng")
+                logger.warning(f"[OCR] OCR language fallback failed for {filename}: {lang_error}")
+                if get_tesseract_config():
+                    extracted_text = pytesseract.image_to_string(processed_image, lang="eng", config=get_tesseract_config())
+                else:
+                    extracted_text = pytesseract.image_to_string(processed_image, lang="eng")
 
             text_length = len(extracted_text.strip())
 

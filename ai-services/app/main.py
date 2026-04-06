@@ -17,6 +17,7 @@ from app.api.fraud_detection import router as fraud_router
 from app.modules.document_processing.document_processing_router import (
     router as document_processing_router,
 )
+from app.modules.document_processing.runtime_health import get_runtime_health
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,6 +38,13 @@ def get_allowed_origins() -> list[str]:
     ]
 
 
+def get_allowed_origin_regex() -> str | None:
+    cors_env = os.getenv("CORS_ORIGIN", "").strip()
+    if cors_env:
+        return None
+    return r".*"
+
+
 app = FastAPI(
     title="AI Smart Agriculture Services",
     description="Microservice for AI-powered agriculture administration features",
@@ -46,6 +54,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_allowed_origins(),
+    allow_origin_regex=get_allowed_origin_regex(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -73,10 +82,14 @@ async def root():
 
 @app.get("/health")
 async def health_check():
+    runtime_health = get_runtime_health()
     return {
-        "status": "healthy",
+        "status": "ok",
         "service": "AI Smart Agriculture Services",
         "version": "1.0.0",
+        "docling": bool(runtime_health.get("docling_available", False)),
+        "ocr": bool(runtime_health.get("ocr_available", False)),
+        "granite": bool(runtime_health.get("granite_available", False)),
     }
 
 
