@@ -307,113 +307,131 @@ function normalizeAmount(value: unknown): string {
 /**
  * Normalizes extracted fields from backend contract
  * 
- * Priority order (Part 10 - Updated for new pipeline):
- * 1. structured_data (PREFERRED) - from new unified extraction pipeline
- * 2. canonical schema (FALLBACK) - old structured format if present
- * 
- * Returns UI-friendly flat field structure for component consumption
+ * FIXED: Field-level fallback instead of object-level fallback
+ * For each field, try canonical first, then structured_data
+ * This prevents blank fields when canonical is partial
  */
 function normalizeExtractedFields(application: any): Record<string, any> {
-  // PRIORITY: Use canonical schema first, structured_data only as fallback
-  const canonicalData = application?.extractedData?.canonical
-  if (canonicalData && typeof canonicalData === 'object' && Object.keys(canonicalData).length > 0) {
-    const canonicalFields: Record<string, any> = {
-      // Applicant information
-      farmerName: canonicalData.applicant?.name || '',
-      guardianName: canonicalData.applicant?.guardian_name || '',
-      aadhaarNumber: canonicalData.applicant?.aadhaar_number || '',
-      mobileNumber: canonicalData.applicant?.mobile_number || '',
-      address: canonicalData.applicant?.address || '',
-      village: canonicalData.applicant?.village || '',
-      district: canonicalData.applicant?.district || '',
-      state: canonicalData.applicant?.state || '',
+  // Get both canonical and structured data for field-level fallback
+  const canonical = application?.extractedData?.canonical || {}
+  const structured = application?.extractedData?.structured_data || {}
 
-      // Agriculture information
-      landSize: canonicalData.agriculture?.land_size || '',
-      landUnit: canonicalData.agriculture?.land_unit || '',
-      surveyNumber: canonicalData.agriculture?.survey_number || '',
-      cropName: canonicalData.agriculture?.crop_name || '',
-      season: canonicalData.agriculture?.season || '',
+  // Field-level fallback: try canonical first, then structured_data for each field
+  const mergedFields: Record<string, any> = {
+    // Applicant information - field-level fallback
+    farmerName: canonical.applicant?.name || 
+                structured.farmer_name || 
+                structured.applicant_name || '',
+    
+    guardianName: canonical.applicant?.guardian_name || 
+                  structured.guardian_name || '',
+    
+    aadhaarNumber: canonical.applicant?.aadhaar_number || 
+                   structured.aadhaar_number || '',
+    
+    mobileNumber: canonical.applicant?.mobile_number || 
+                  structured.mobile_number || 
+                  structured.phone_number || '',
+    
+    address: canonical.applicant?.address || 
+             structured.address || '',
+    
+    village: canonical.applicant?.village || 
+             structured.village || '',
+    
+    district: canonical.applicant?.district || 
+              structured.district || '',
+    
+    state: canonical.applicant?.state || 
+           structured.state || '',
 
-      // Request information
-      schemeName: canonicalData.request?.scheme_name || '',
-      requestType: canonicalData.request?.request_type || '',
-      requestedAmount: normalizeAmount(
-        canonicalData.request?.requested_amount ||
-        canonicalData.request?.claim_amount ||
-        canonicalData.request?.subsidy_amount ||
-        canonicalData.request?.amount ||
-        canonicalData.requested_amount ||
-        ''
-      ),
-      annualIncome: normalizeAmount(
-        canonicalData.annual_income ||
-        canonicalData.annualIncome ||
-        canonicalData.request?.annual_income ||
-        canonicalData.request?.annualIncome ||
-        ''
-      ),
-      issueSummary: canonicalData.request?.issue_summary || '',
-      claimReason: canonicalData.request?.claim_reason || '',
+    // Agriculture information - field-level fallback
+    landSize: canonical.agriculture?.land_size || 
+              structured.land_size || 
+              structured.landSize || '',
+    
+    landUnit: canonical.agriculture?.land_unit || 
+              structured.land_unit || 
+              structured.landUnit || '',
+    
+    surveyNumber: canonical.agriculture?.survey_number || 
+                  structured.survey_number || '',
+    
+    cropName: canonical.agriculture?.crop_name || 
+              structured.crop_name || 
+              structured.cropName || '',
+    
+    season: canonical.agriculture?.season || 
+            structured.season || '',
 
-      // Document metadata
-      documentType: canonicalData.document_meta?.supporting_doc_type || canonicalData.document_type || '',
-      documentDate: canonicalData.document_meta?.document_date || '',
-      referenceNumber: canonicalData.document_meta?.reference_number || '',
-      sourceFileName: canonicalData.document_meta?.source_file_name || ''
-    }
+    // Request information - field-level fallback
+    schemeName: canonical.request?.scheme_name || 
+                structured.scheme_name || '',
+    
+    requestType: canonical.request?.request_type || 
+                 structured.request_type || '',
+    
+    requestedAmount: normalizeAmount(
+      canonical.request?.requested_amount ||
+      canonical.request?.claim_amount ||
+      canonical.request?.subsidy_amount ||
+      canonical.request?.amount ||
+      structured.requested_amount ||
+      structured.claim_amount ||
+      structured.subsidy_amount ||
+      structured.amount ||
+      ''
+    ),
+    
+    annualIncome: normalizeAmount(
+      canonical.annual_income ||
+      canonical.request?.annual_income ||
+      structured.annual_income ||
+      structured.annualIncome ||
+      ''
+    ),
+    
+    issueSummary: canonical.request?.issue_summary || 
+                  structured.issue_description || 
+                  structured.grievance_description || '',
+    
+    claimReason: canonical.request?.claim_reason || 
+                structured.claim_reason || 
+                structured.issue_description || 
+                structured.grievance_description || '',
 
-    return canonicalFields
+    // Document metadata - field-level fallback
+    documentType: canonical.document_meta?.supporting_doc_type || 
+                  canonical.document_type || 
+                  structured.document_type_detail || 
+                  application.extractedData?.document_type || '',
+    
+    documentDate: canonical.document_meta?.document_date || 
+                  structured.documentDate || '',
+    
+    referenceNumber: canonical.document_meta?.reference_number || 
+                     structured.document_reference || 
+                     structured.reference_number || '',
+    
+    sourceFileName: canonical.document_meta?.source_file_name || 
+                    structured.source_file_name || '',
+
+    // Additional fields that may exist in structured_data
+    policyNumber: structured.policy_number || '',
+    issuesAuthority: structured.issuing_authority || ''
   }
 
-  // FALLBACK: structured_data from new extraction pipeline
-  const structuredData = application?.extractedData?.structured_data
-  if (structuredData && typeof structuredData === 'object' && Object.keys(structuredData).length > 0) {
-    return {
-      farmerName: structuredData.farmer_name || structuredData.applicant_name || '',
-      aadhaarNumber: structuredData.aadhaar_number || '',
-      mobileNumber: structuredData.mobile_number || structuredData.phone_number || '',
-      address: structuredData.address || '',
-      village: structuredData.village || '',
-      district: structuredData.district || '',
-
-      landSize: structuredData.land_size || structuredData.landSize || '',
-      cropName: structuredData.crop_name || '',
-      season: structuredData.season || '',
-
-      schemeName: structuredData.scheme_name || '',
-      requestedAmount: normalizeAmount(
-        structuredData.requested_amount ||
-        structuredData.claim_amount ||
-        structuredData.subsidy_amount ||
-        structuredData.amount ||
-        ''
-      ),
-      annualIncome: normalizeAmount(structuredData.annual_income || structuredData.annualIncome || ''),
-      claimReason: structuredData.claim_reason || structuredData.issue_description || structuredData.grievance_description || '',
-
-      documentType: structuredData.document_type_detail || application.extractedData?.document_type || '',
-      referenceNumber: structuredData.document_reference || '',
-
-      policyNumber: structuredData.policy_number || '',
-      issuesAuthority: structuredData.issuing_authority || ''
-    }
-  }
-
-  // FINAL FALLBACK: Empty object if nothing available
-  return {}
-
+  return mergedFields
 }
 
 /**
- * Build structured extracted sections prioritizing canonical data.
+ * Build structured extracted sections with field-level fallback.
+ * FIXED: Use field-level fallback instead of object-level choice
  * Returns only validated, non-placeholder values and never returns raw backend objects.
  */
 function buildCanonicalExtractedSections(application: any) {
   const canonical = application?.extractedData?.canonical || {}
   const structured = application?.extractedData?.structured_data || {}
-
-  const src = (canonical && Object.keys(canonical).length > 0) ? canonical : structured || {}
 
   const isValidString = (v: any) => {
     if (v === null || v === undefined) return false
@@ -451,42 +469,86 @@ function buildCanonicalExtractedSections(application: any) {
     document: {} as Record<string, any>
   }
 
-  // Applicant
-  const applicant = src.applicant || src || {}
-  if (isValidString(applicant?.name || src.farmer_name || src.applicant_name)) {
-    const name = applicant?.name || src.farmer_name || src.applicant_name
-    if (String(name).trim().toLowerCase() !== 'supporting document') {
-      sections.applicant['farmerName'] = String(name).trim()
+  // Applicant - field-level fallback
+  const applicantName = canonical.applicant?.name || structured.farmer_name || structured.applicant_name
+  if (isValidString(applicantName)) {
+    if (String(applicantName).trim().toLowerCase() !== 'supporting document') {
+      sections.applicant['farmerName'] = String(applicantName).trim()
     }
   }
-  if (isValidString(applicant?.guardian_name)) sections.applicant['guardianName'] = applicant.guardian_name
-  if (isValidAadhaar(applicant?.aadhaar_number || applicant?.aadhaar)) sections.applicant['aadhaarNumber'] = String(applicant?.aadhaar_number || applicant?.aadhaar).replace(/\D/g, '')
-  if (isValidMobile(applicant?.mobile_number || applicant?.phone)) sections.applicant['mobileNumber'] = String(applicant?.mobile_number || applicant?.phone).trim()
+  
+  const guardianName = canonical.applicant?.guardian_name || structured.guardian_name
+  if (isValidString(guardianName)) sections.applicant['guardianName'] = guardianName
+  
+  const aadhaarNumber = canonical.applicant?.aadhaar_number || structured.aadhaar_number
+  if (isValidAadhaar(aadhaarNumber)) sections.applicant['aadhaarNumber'] = String(aadhaarNumber).replace(/\D/g, '')
+  
+  const mobileNumber = canonical.applicant?.mobile_number || structured.mobile_number || structured.phone_number
+  if (isValidMobile(mobileNumber)) sections.applicant['mobileNumber'] = String(mobileNumber).trim()
 
-  // Contact
-  if (isValidString(applicant?.email || src.email)) sections.contact['email'] = applicant?.email || src.email
-  if (isValidMobile(applicant?.mobile_number || src.mobile_number || src.phone_number)) sections.contact['mobile'] = applicant?.mobile_number || src.mobile_number || src.phone_number
+  // Contact - field-level fallback
+  const email = canonical.applicant?.email || structured.email
+  if (isValidString(email)) sections.contact['email'] = email
+  
+  const contactMobile = canonical.applicant?.mobile_number || structured.mobile_number || structured.phone_number
+  if (isValidMobile(contactMobile)) sections.contact['mobile'] = contactMobile
 
-  // Location
-  if (isValidString(applicant?.address || src.address)) sections.location['address'] = applicant?.address || src.address
-  if (isValidString(applicant?.village || src.village)) sections.location['village'] = applicant?.village || src.village
-  if (isValidString(applicant?.district || src.district)) sections.location['district'] = applicant?.district || src.district
-  if (isValidString(applicant?.state || src.state)) sections.location['state'] = applicant?.state || src.state
+  // Location - field-level fallback
+  const address = canonical.applicant?.address || structured.address
+  if (isValidString(address)) sections.location['address'] = address
+  
+  const village = canonical.applicant?.village || structured.village
+  if (isValidString(village)) sections.location['village'] = village
+  
+  const district = canonical.applicant?.district || structured.district
+  if (isValidString(district)) sections.location['district'] = district
+  
+  const state = canonical.applicant?.state || structured.state
+  if (isValidString(state)) sections.location['state'] = state
 
-  // Financial
-  if (isValidAmount(src.requested_amount || src.requestedAmount || (src.request && src.request.requested_amount))) sections.financial['requestedAmount'] = src.requested_amount || src.requestedAmount || (src.request && src.request.requested_amount)
-  if (isValidAmount(src.annual_income || src.annualIncome)) sections.financial['annualIncome'] = src.annual_income || src.annualIncome
+  // Financial - field-level fallback
+  const requestedAmount = canonical.request?.requested_amount || 
+                         canonical.request?.claim_amount || 
+                         canonical.request?.subsidy_amount || 
+                         canonical.request?.amount ||
+                         structured.requested_amount || 
+                         structured.claim_amount || 
+                         structured.subsidy_amount || 
+                         structured.amount
+  if (isValidAmount(requestedAmount)) sections.financial['requestedAmount'] = requestedAmount
+  
+  const annualIncome = canonical.annual_income || 
+                      canonical.request?.annual_income || 
+                      structured.annual_income || 
+                      structured.annualIncome
+  if (isValidAmount(annualIncome)) sections.financial['annualIncome'] = annualIncome
 
-  // Agriculture
-  if (isValidString(src.agriculture?.land_size || src.land_size || src.landSize)) sections.agriculture['landSize'] = src.agriculture?.land_size || src.land_size || src.landSize
-  if (isValidString(src.agriculture?.land_unit || src.land_unit || src.landUnit)) sections.agriculture['landUnit'] = src.agriculture?.land_unit || src.land_unit || src.landUnit
-  if (isValidString(src.agriculture?.crop_name || src.crop_name || src.cropName)) sections.agriculture['cropName'] = src.agriculture?.crop_name || src.crop_name || src.cropName
-  if (isValidString(src.agriculture?.season || src.season)) sections.agriculture['season'] = src.agriculture?.season || src.season
+  // Agriculture - field-level fallback
+  const landSize = canonical.agriculture?.land_size || structured.land_size || structured.landSize
+  if (isValidString(landSize)) sections.agriculture['landSize'] = landSize
+  
+  const landUnit = canonical.agriculture?.land_unit || structured.land_unit || structured.landUnit
+  if (isValidString(landUnit)) sections.agriculture['landUnit'] = landUnit
+  
+  const cropName = canonical.agriculture?.crop_name || structured.crop_name || structured.cropName
+  if (isValidString(cropName)) sections.agriculture['cropName'] = cropName
+  
+  const season = canonical.agriculture?.season || structured.season
+  if (isValidString(season)) sections.agriculture['season'] = season
 
-  // Document
-  if (isValidString(src.document_meta?.reference_number || src.reference_number || src.referenceNumber)) sections.document['referenceNumber'] = src.document_meta?.reference_number || src.reference_number || src.referenceNumber
-  if (isValidString(src.document_meta?.document_date || src.documentDate)) sections.document['documentDate'] = src.document_meta?.document_date || src.documentDate
-  if (isValidString(src.document_type || src.documentType)) sections.document['documentType'] = src.document_type || src.documentType
+  // Document - field-level fallback
+  const referenceNumber = canonical.document_meta?.reference_number || 
+                         structured.document_reference || 
+                         structured.reference_number
+  if (isValidString(referenceNumber)) sections.document['referenceNumber'] = referenceNumber
+  
+  const documentDate = canonical.document_meta?.document_date || structured.documentDate
+  if (isValidString(documentDate)) sections.document['documentDate'] = documentDate
+  
+  const documentType = canonical.document_meta?.supporting_doc_type || 
+                      canonical.document_type || 
+                      structured.document_type_detail
+  if (isValidString(documentType)) sections.document['documentType'] = documentType
 
   return sections
 }
