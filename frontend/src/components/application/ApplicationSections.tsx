@@ -77,6 +77,17 @@ export function ApplicationSections({ application }: ApplicationSectionsProps) {
   const hasRiskFlags = (normalizedData.riskFlags || []).length > 0
   const hasExtracted = Object.keys(extractedFields).length > 0
 
+  // OCR FAILURE DETECTION - Fixed for object-based risk_flags
+  const ocrFailure =
+    (normalizedData.riskFlags || []).some((flag: any) =>
+      (typeof flag === "string" && flag === "OCR_FAILURE") ||
+      (flag && typeof flag === "object" && flag.code === "OCR_FAILURE")
+    ) ||
+    (application?.extractedData?.risk_flags || []).some((flag: any) =>
+      (typeof flag === "string" && flag === "OCR_FAILURE") ||
+      (flag && typeof flag === "object" && flag.code === "OCR_FAILURE")
+    )
+
   const formatDocLabel = (type: string) => {
     if (!type) return 'Unknown'
     return String(type).replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())
@@ -84,6 +95,19 @@ export function ApplicationSections({ application }: ApplicationSectionsProps) {
 
   return (
     <div className="space-y-6">
+      {/* OCR FAILURE WARNING */}
+      {ocrFailure && (
+        <div className="bg-yellow-50 border border-yellow-300 p-4 rounded-md">
+          <h3 className="text-yellow-800 font-semibold">
+            OCR Failed – Manual Review Required
+          </h3>
+          <p className="text-yellow-700">
+            This document could not be processed automatically because OCR is unavailable.
+            Please review manually or upload a clearer version.
+          </p>
+        </div>
+      )}
+
       {/* 1. Officer Summary (TOP) */}
       <SectionCard title="Officer Summary">
         <div className="space-y-3">
@@ -246,7 +270,11 @@ export function ApplicationSections({ application }: ApplicationSectionsProps) {
             </div>
           ) : (
             <div className="text-center py-8">
-              <p className="text-gray-500">No extracted fields available yet</p>
+              {ocrFailure ? (
+                <p className="text-gray-500">OCR failed for this document. Automatic extraction is unavailable. Manual review is required.</p>
+              ) : (
+                <p className="text-gray-500">No extracted fields available yet</p>
+              )}
               {application.aiProcessingStatus === 'processing' && (
                 <p className="text-sm text-gray-400 mt-2">AI processing is in progress...</p>
               )}

@@ -650,11 +650,18 @@ export function normalizeApplicationData(application: Application): NormalizedAp
     // Build sanitized extracted sections (extractedFields already computed)
     const extractedSections = buildCanonicalExtractedSections(application)
 
-    // Handle risk flags - convert string[] to object format if needed
+    // Handle risk flags - preserve object format for OCR failure, convert strings to objects
     const rawRiskFlags = application.extractedData?.risk_flags || []
-    const riskFlags = rawRiskFlags.map((flag: any) => 
-      typeof flag === 'string' ? { message: flag } : flag
-    )
+    const riskFlags = rawRiskFlags.map((flag: any) => {
+      if (typeof flag === 'string') {
+        return { message: flag }
+      }
+      if (flag && typeof flag === 'object') {
+        // Preserve OCR failure objects as-is to maintain code/severity/message structure
+        return flag
+      }
+      return { message: String(flag) }
+    })
     
     // Get decision support and intelligence data
     const decisionSupport = application.extractedData?.decision_support || null
@@ -666,7 +673,12 @@ export function normalizeApplicationData(application: Application): NormalizedAp
     // Frontend fail-safe defaults - prefer real intelligence summary over generic fallback
     const safeAiSummary = officerSummary || ""  
     const safeRiskFlags = riskFlags || []
-    const safeDecisionSupport = decisionSupport || null
+    const safeDecisionSupport = decisionSupport || {
+      decision: "manual_review_required",
+      confidence: 0.0,
+      reasoning: [],
+      recommendation: "manual_review_required"
+    }
     const safeCanonicalData = canonicalData || null
 
     // NEW: Single source normalization

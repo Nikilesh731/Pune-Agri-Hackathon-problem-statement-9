@@ -22,15 +22,31 @@ class RuntimeHealthChecker:
         """Check if Python packages are importable"""
         checks = {}
         
-        # Check pytesseract
+        # Check PaddleOCR stack (primary image OCR engine)
+        try:
+            import paddleocr
+            checks['paddleocr'] = True
+            logger.info("[HEALTH] PaddleOCR available: v" + getattr(paddleocr, '__version__', 'unknown'))
+        except ImportError as e:
+            checks['paddleocr'] = False
+            logger.warning(f"[HEALTH] PaddleOCR not available: {e}")
+        
+        try:
+            import paddle
+            checks['paddlepaddle'] = True
+            logger.info("[HEALTH] PaddlePaddle available: v" + getattr(paddle, '__version__', 'unknown'))
+        except ImportError as e:
+            checks['paddlepaddle'] = False
+            logger.warning(f"[HEALTH] PaddlePaddle not available: {e}")
+        
+        # Check pytesseract (legacy fallback)
         try:
             import pytesseract
             checks['pytesseract'] = True
             logger.info("[HEALTH] pytesseract available: v" + getattr(pytesseract, '__version__', 'unknown'))
         except ImportError as e:
             checks['pytesseract'] = False
-            self.missing_critical.append('pytesseract Python package')
-            logger.error(f"[HEALTH] pytesseract not available: {e}")
+            logger.warning(f"[HEALTH] pytesseract not available: {e}")
         
         # Check python-docx
         try:
@@ -89,28 +105,31 @@ class RuntimeHealthChecker:
         """Check if system binaries are available"""
         checks = {}
         
-        # CRITICAL: Force verify Tesseract binary with shutil.which()
+        # SOFT CHECK: Allow system to start even if OCR engines are missing
+        # PaddleOCR is the primary OCR engine and doesn't require system binaries
+        # Tesseract is only a legacy fallback
         tesseract_path = shutil.which("tesseract")
         
-        if not tesseract_path:
-            raise RuntimeError("Tesseract binary NOT found in runtime")
-        
-        logger.info(f"[HEALTH] Tesseract found at: {tesseract_path}")
-        checks['tesseract_binary'] = True
-        
-        # Additional verification - try to get version
-        try:
-            version_result = subprocess.run([tesseract_path, '--version'], 
-                                          capture_output=True, text=True, timeout=10)
-            if version_result.returncode == 0:
-                version_line = version_result.stdout.split('\n')[0] if version_result.stdout else ''
-                logger.info(f"[HEALTH] Tesseract version: {version_line}")
-            else:
-                logger.warning("[HEALTH] Could not get Tesseract version")
-        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
-            logger.warning(f"[HEALTH] Tesseract version check failed: {e}")
-        
-        logger.info("[HEALTH] Image OCR: READY")
+        if tesseract_path:
+            logger.info(f"[HEALTH] Tesseract found at: {tesseract_path}")
+            checks['tesseract_binary'] = True
+            
+            # Additional verification - try to get version
+            try:
+                version_result = subprocess.run([tesseract_path, '--version'], 
+                                              capture_output=True, text=True, timeout=10)
+                if version_result.returncode == 0:
+                    version_line = version_result.stdout.split('\n')[0] if version_result.stdout else ''
+                    logger.info(f"[HEALTH] Tesseract version: {version_line}")
+                else:
+                    logger.warning("[HEALTH] Could not get Tesseract version")
+            except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
+                logger.warning(f"[HEALTH] Tesseract version check failed: {e}")
+            
+            logger.info("[HEALTH] Legacy Tesseract OCR: AVAILABLE")
+        else:
+            logger.warning("[HEALTH] Tesseract binary not found - legacy OCR fallback unavailable")
+            checks['tesseract_binary'] = False
         
         return checks
     
@@ -165,14 +184,23 @@ class RuntimeHealthChecker:
     def fail_if_missing_critical(self) -> None:
         """Fail fast if critical dependencies are missing"""
         if self.missing_critical:
-            # PART 1: Allow PDF/DOCX to work without Tesseract, but fail clearly for images
-            critical_for_images = [dep for dep in self.missing_critical if 'Tesseract' in dep]
-            critical_for_docs = [dep for dep in self.missing_critical if 'Tesseract' not in dep and 'textract' not in dep]
+            # PART 1: Allow PDF/DOCX to work without OCR engines, but fail clearly for images
+            # PaddleOCR is primary, Tesseract is legacy fallback
+            paddle_missing = [dep for dep in self.missing_critical if 'paddle' in dep.lower() or 'PaddleOCR' in dep]
+            tesseract_missing = [dep for dep in self.missing_critical if 'Tesseract' in dep]
+            critical_for_docs = [dep for dep in self.missing_critical if 'paddle' not in dep.lower() and 'PaddleOCR' not in dep and 'tesseract' not in dep.lower() and 'Tesseract' not in dep]
             
-            if critical_for_images:
-                error_msg = f"WARNING: Missing dependencies for image OCR: {', '.join(critical_for_images)}. Image processing will fail."
+            if paddle_missing:
+                error_msg = f"WARNING: Missing primary OCR dependencies: {', '.join(paddle_missing)}. Image processing will fall back to Tesseract if available."
                 logger.error(error_msg)
-                logger.warning("[HEALTH] Service will continue but image OCR will not work without Tesseract")
+                logger.warning("[HEALTH] Image OCR quality will be degraded without PaddleOCR")
+            
+            if tesseract_missing and not paddle_missing:
+                logger.warning("[HEALTH] Legacy Tesseract OCR unavailable - only PaddleOCR will be used for images")
+            elif tesseract_missing and paddle_missing:
+                error_msg = f"WARNING: Missing all OCR dependencies: {', '.join(paddle_missing + tesseract_missing)}. Image processing will fail."
+                logger.error(error_msg)
+                logger.warning("[HEALTH] Service will continue but image OCR will not work without PaddleOCR or Tesseract")
             
             if critical_for_docs:
                 error_msg = f"CRITICAL: Missing required dependencies: {', '.join(critical_for_docs)}"
@@ -201,9 +229,18 @@ def ensure_runtime_ready() -> None:
     if health['overall_status'] != 'healthy':
         _runtime_checker.fail_if_missing_critical()
     
-    # CRITICAL: Hard fail on missing Tesseract OCR - no degraded mode in production
-    if not health['system_binaries'].get('tesseract_binary', False):
-        raise RuntimeError("Critical dependency missing: Tesseract OCR not available")
+    # SOFT WARNING: Allow system to start without OCR engines, but warn appropriately
+    paddleocr_available = health['python_dependencies'].get('paddleocr', False)
+    paddlepaddle_available = health['python_dependencies'].get('paddlepaddle', False)
+    ocr_available = paddleocr_available and paddlepaddle_available
+    tesseract_available = health['system_binaries'].get('tesseract_binary', False)
+    
+    if not ocr_available and not tesseract_available:
+        logger.warning("[HEALTH] System starting without any OCR engines - image processing will fail")
+    elif not ocr_available and tesseract_available:
+        logger.warning("[HEALTH] System starting without complete PaddleOCR stack (both paddleocr and paddlepaddle required) - image OCR will use legacy Tesseract fallback")
+    elif ocr_available and not tesseract_available:
+        logger.info("[HEALTH] System starting with complete PaddleOCR stack - Tesseract legacy fallback unavailable")
 
 # Auto-run health check when module is imported
 if __name__ != "__main__":

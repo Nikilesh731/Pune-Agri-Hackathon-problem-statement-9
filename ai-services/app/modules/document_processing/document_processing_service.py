@@ -23,6 +23,7 @@ from ..ai_assist.llm_refinement_service import add_llm_refinement_to_response
 from ..intelligence.intelligence_service import IntelligenceService
 from .ml_priority import predict_application_priority
 from .workflow_service import WorkflowService
+from .paddle_ocr_service import PaddleOCRService
 
 # Import new ML service
 try:
@@ -57,6 +58,15 @@ class DocumentProcessingService:
             self.classification_service,
             self.extraction_service
         )
+        
+        # Initialize PaddleOCR service with graceful degradation
+        try:
+            self.paddle_ocr_service = PaddleOCRService()
+            logger.info("[INIT] PaddleOCR service initialized successfully")
+        except Exception as e:
+            logger.warning(f"[INIT] PaddleOCR service initialization failed: {e}")
+            logger.warning("[INIT] Image OCR will not be available, but PDF/DOCX/TXT processing continues")
+            self.paddle_ocr_service = None
 
     # --- Defensive helpers -------------------------------------------------
     def _safe_dict(self, val: Any) -> Dict[str, Any]:
@@ -169,16 +179,67 @@ class DocumentProcessingService:
                     
                 except Exception as extraction_error:
                     logger.error(f"[EXTRACT] Text extraction failed: {extraction_error}")
-                    return DocumentProcessingResult(
-                        request_id=str(uuid.uuid4()),
-                        success=False,
-                        processing_time_ms=0,
-                        processing_type=processing_type,
-                        filename=filename,
-                        data=None,
-                        metadata={},
-                        error_message=f"Text extraction failed: {str(extraction_error)}"
-                    )
+                    
+                    # CHECK IF THIS IS AN OCR FAILURE (IMAGE FILE)
+                    file_extension = filename.lower().split('.')[-1] if '.' in filename.lower() else ''
+                    is_image_file = file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp']
+                    is_ocr_failure = "OCR failed" in str(extraction_error) or "Tesseract" in str(extraction_error) or "PaddleOCR" in str(extraction_error)
+                    
+                    if is_image_file and is_ocr_failure:
+                        # OCR FAILURE: Return proper response with risk_flags
+                        logger.warning(f"[PIPELINE] OCR FAILED for image {filename}: {extraction_error}")
+                        
+                        # Create OCR failure response data
+                        ocr_failure_data = {
+                            "document_type": "unknown",
+                            "structured_data": {},
+                            "extracted_fields": {},
+                            "missing_fields": [],
+                            "confidence": 0.0,
+                            "reasoning": ["OCR failed - image OCR unavailable or extraction failed"],
+                            "classification_confidence": 0.0,
+                            "classification_reasoning": {
+                                "keywords_found": [],
+                                "structural_indicators": [],
+                                "confidence_factors": ["OCR failed - image OCR unavailable or extraction failed"]
+                            },
+                            "risk_flags": [
+                                {
+                                    "code": "OCR_FAILURE",
+                                    "severity": "high",
+                                    "message": "OCR failed - image OCR unavailable or extraction failed"
+                                }
+                            ],
+                            "decision_support": {
+                                "decision": "manual_review_required",
+                                "confidence": 0.0,
+                                "reasoning": ["OCR failed - image OCR unavailable or extraction failed"]
+                            },
+                            "canonical": {}
+                        }
+                        
+                        return DocumentProcessingResult(
+                            request_id=str(uuid.uuid4()),
+                            success=True,  # Success=true but with OCR failure flags
+                            processing_time_ms=0,
+                            processing_type=processing_type,
+                            filename=filename,
+                            data=ocr_failure_data,
+                            metadata={"ocr_failure": True},
+                            error_message=None
+                        )
+                    else:
+                        # REGULAR EXTRACTION FAILURE: Return normal error
+                        return DocumentProcessingResult(
+                            request_id=str(uuid.uuid4()),
+                            success=False,
+                            processing_time_ms=0,
+                            processing_type=processing_type,
+                            filename=filename,
+                            data=None,
+                            metadata={},
+                            error_message=f"Text extraction failed: {str(extraction_error)}"
+                        )
             else:
                 logger.warning("[EXTRACT] No file data provided for extraction")
                 return DocumentProcessingResult(
@@ -269,19 +330,71 @@ class DocumentProcessingService:
                         
                     except Exception as extraction_error:
                         logger.error(f"[EXTRACT] Batch text extraction failed for {filename}: {extraction_error}")
-                        # Create error result for this document
-                        error_result = DocumentProcessingResult(
-                            request_id=str(uuid.uuid4()),
-                            success=False,
-                            processing_time_ms=0,
-                            processing_type=doc.get('processing_type', processing_type),
-                            filename=filename,
-                            data=None,
-                            metadata={},
-                            error_message=f"Text extraction failed: {str(extraction_error)}"
-                        )
-                        processed_documents.append(error_result)
-                        continue
+                        
+                        # CHECK IF THIS IS AN OCR FAILURE (IMAGE FILE)
+                        file_extension = filename.lower().split('.')[-1] if '.' in filename.lower() else ''
+                        is_image_file = file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp']
+                        is_ocr_failure = "OCR failed" in str(extraction_error) or "Tesseract" in str(extraction_error) or "PaddleOCR" in str(extraction_error)
+                        
+                        if is_image_file and is_ocr_failure:
+                            # OCR FAILURE: Return proper response with risk_flags
+                            logger.warning(f"[PIPELINE] Batch OCR FAILED for image {filename}: {extraction_error}")
+                            
+                            # Create OCR failure response data
+                            ocr_failure_data = {
+                                "document_type": "unknown",
+                                "structured_data": {},
+                                "extracted_fields": {},
+                                "missing_fields": [],
+                                "confidence": 0.0,
+                                "reasoning": ["OCR failed - image OCR unavailable or extraction failed"],
+                                "classification_confidence": 0.0,
+                                "classification_reasoning": {
+                                    "keywords_found": [],
+                                    "structural_indicators": [],
+                                    "confidence_factors": ["OCR failed - image OCR unavailable or extraction failed"]
+                                },
+                                "risk_flags": [
+                                    {
+                                        "code": "OCR_FAILURE",
+                                        "severity": "high",
+                                        "message": "OCR failed - image OCR unavailable or extraction failed"
+                                    }
+                                ],
+                                "decision_support": {
+                                    "decision": "manual_review_required",
+                                    "confidence": 0.0,
+                                    "reasoning": ["OCR failed - image OCR unavailable or extraction failed"]
+                                },
+                                "canonical": {}
+                            }
+                            
+                            ocr_failure_result = DocumentProcessingResult(
+                                request_id=str(uuid.uuid4()),
+                                success=True,  # Success=true but with OCR failure flags
+                                processing_time_ms=0,
+                                processing_type=doc.get('processing_type', processing_type),
+                                filename=filename,
+                                data=ocr_failure_data,
+                                metadata={"ocr_failure": True},
+                                error_message=None
+                            )
+                            processed_documents.append(ocr_failure_result)
+                            continue
+                        else:
+                            # REGULAR EXTRACTION FAILURE: Return normal error
+                            error_result = DocumentProcessingResult(
+                                request_id=str(uuid.uuid4()),
+                                success=False,
+                                processing_time_ms=0,
+                                processing_type=doc.get('processing_type', processing_type),
+                                filename=filename,
+                                data=None,
+                                metadata={},
+                                error_message=f"Text extraction failed: {str(extraction_error)}"
+                            )
+                            processed_documents.append(error_result)
+                            continue
                 else:
                     logger.warning(f"[EXTRACT] Batch no file data for {filename}")
                     # Create error result for this document
@@ -369,14 +482,48 @@ class DocumentProcessingService:
                     
                 except Exception as extraction_error:
                     logger.error(f"[EXTRACT] Text extraction failed for classification: {extraction_error}")
-                    return {
-                        "document_type": "unknown",
-                        "classification_confidence": 0.0,
-                        "classification_reasoning": {},
-                        "processing_time_ms": 0,
-                        "request_id": str(uuid.uuid4()),
-                        "error_message": f"Text extraction failed: {str(extraction_error)}"
-                    }
+                    
+                    # CHECK IF THIS IS AN OCR FAILURE (IMAGE FILE)
+                    file_extension = filename.lower().split('.')[-1] if '.' in filename.lower() else ''
+                    is_image_file = file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp']
+                    is_ocr_failure = "OCR failed" in str(extraction_error) or "Tesseract" in str(extraction_error) or "PaddleOCR" in str(extraction_error)
+                    
+                    if is_image_file and is_ocr_failure:
+                        # OCR FAILURE: Return proper response with risk_flags
+                        logger.warning(f"[PIPELINE] Classification OCR FAILED for image {filename}: {extraction_error}")
+                        return {
+                            "document_type": "unknown",
+                            "classification_confidence": 0.0,
+                            "classification_reasoning": {
+                                "keywords_found": [],
+                                "structural_indicators": [],
+                                "confidence_factors": ["OCR failed"]
+                            },
+                            "processing_time_ms": 0,
+                            "request_id": str(uuid.uuid4()),
+                            "risk_flags": [
+                                {
+                                    "code": "OCR_FAILURE",
+                                    "severity": "high",
+                                    "message": "OCR failed - image OCR unavailable or extraction failed"
+                                }
+                            ],
+                            "decision_support": {
+                                "decision": "manual_review_required",
+                                "confidence": 0.0,
+                                "reasoning": ["OCR failed"]
+                            }
+                        }
+                    else:
+                        # REGULAR EXTRACTION FAILURE: Return normal error
+                        return {
+                            "document_type": "unknown",
+                            "classification_confidence": 0.0,
+                            "classification_reasoning": {},
+                            "processing_time_ms": 0,
+                            "request_id": str(uuid.uuid4()),
+                            "error_message": f"Text extraction failed: {str(extraction_error)}"
+                        }
             else:
                 logger.warning("[EXTRACT] No file data provided for classification extraction")
                 return {
@@ -574,16 +721,67 @@ class DocumentProcessingService:
                     
                 except Exception as ocr_error:
                     logger.error(f"[DOC OCR] extraction failed: {ocr_error}")
-                    return DocumentProcessingResult(
-                        request_id=str(uuid.uuid4()),
-                        success=False,
-                        processing_time_ms=0,
-                        processing_type=request.processing_type,
-                        filename=filename,
-                        data=None,
-                        metadata={},
-                        error_message=f"Text extraction failed: {str(ocr_error)}"
-                    )
+                    
+                    # CHECK IF THIS IS AN OCR FAILURE (IMAGE FILE)
+                    file_extension = filename.lower().split('.')[-1] if '.' in filename.lower() else ''
+                    is_image_file = file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp']
+                    is_ocr_failure = "OCR failed" in str(ocr_error) or "Tesseract" in str(ocr_error) or "PaddleOCR" in str(ocr_error)
+                    
+                    if is_image_file and is_ocr_failure:
+                        # OCR FAILURE: Return proper response with risk_flags
+                        logger.warning(f"[PIPELINE] Request OCR FAILED for image {filename}: {ocr_error}")
+                        
+                        # Create OCR failure response data
+                        ocr_failure_data = {
+                            "document_type": "unknown",
+                            "structured_data": {},
+                            "extracted_fields": {},
+                            "missing_fields": [],
+                            "confidence": 0.0,
+                            "reasoning": ["OCR failed - image OCR unavailable or extraction failed"],
+                            "classification_confidence": 0.0,
+                            "classification_reasoning": {
+                                "keywords_found": [],
+                                "structural_indicators": [],
+                                "confidence_factors": ["OCR failed - image OCR unavailable or extraction failed"]
+                            },
+                            "risk_flags": [
+                                {
+                                    "code": "OCR_FAILURE",
+                                    "severity": "high",
+                                    "message": "OCR failed - image OCR unavailable or extraction failed"
+                                }
+                            ],
+                            "decision_support": {
+                                "decision": "manual_review_required",
+                                "confidence": 0.0,
+                                "reasoning": ["OCR failed - image OCR unavailable or extraction failed"]
+                            },
+                            "canonical": {}
+                        }
+                        
+                        return DocumentProcessingResult(
+                            request_id=str(uuid.uuid4()),
+                            success=True,  # Success=true but with OCR failure flags
+                            processing_time_ms=0,
+                            processing_type=request.processing_type,
+                            filename=filename,
+                            data=ocr_failure_data,
+                            metadata={"ocr_failure": True},
+                            error_message=None
+                        )
+                    else:
+                        # REGULAR EXTRACTION FAILURE: Return normal error
+                        return DocumentProcessingResult(
+                            request_id=str(uuid.uuid4()),
+                            success=False,
+                            processing_time_ms=0,
+                            processing_type=request.processing_type,
+                            filename=filename,
+                            data=None,
+                            metadata={},
+                            error_message=f"Text extraction failed: {str(ocr_error)}"
+                        )
                 
                 logger.info(f"[DOC] extraction output: processing with workflow")
                 
@@ -1556,32 +1754,40 @@ class DocumentProcessingService:
             raise ValueError(f"DOCX extraction failed: {str(e)}")
     
     def _extract_text_from_image(self, file_content: bytes, filename: str) -> str:
-        """Extract text from image bytes using OCR"""
+        """Extract text from image bytes using PaddleOCR (primary) with Tesseract fallback"""
         import logging
         logger = logging.getLogger(__name__)
         
-        # CRITICAL DEBUG: Log Tesseract binary path before OCR
+        # STEP 1: TRY PADDLEOCR FIRST (PRIMARY OCR ENGINE)
+        if self.paddle_ocr_service:
+            try:
+                logger.info(f"[PADDLE OCR] Attempting extraction with PaddleOCR for {filename}")
+                extracted_text = self.paddle_ocr_service.extract_text_from_image_bytes(file_content, filename)
+                logger.info(f"[PADDLE OCR] PaddleOCR extraction successful: {len(extracted_text)} chars")
+                return extracted_text
+            except Exception as paddle_error:
+                logger.warning(f"[PADDLE OCR] PaddleOCR extraction failed: {paddle_error}")
+                # Continue to fallback
+        else:
+            logger.warning(f"[PADDLE OCR] PaddleOCR service not available for {filename}")
+        
+        # STEP 2: FALLBACK TO TESSERACT (LEGACY FALLBACK ONLY)
+        logger.info(f"[TESSERACT] Falling back to Tesseract for {filename}")
+        
+        # CRITICAL: Fail fast if Tesseract is not available when OCR is actually used
         import shutil
-        logger.info(f"[DEBUG OCR] which tesseract: {shutil.which('tesseract')}")
+        if not shutil.which("tesseract"):
+            raise ValueError("OCR failed: Neither PaddleOCR nor Tesseract is available")
         
         try:
             import PIL.Image
             import pytesseract
             import io
-            import shutil
-            
-            # STEP 2: SAFE RUNTIME DETECTION
-            def configure_tesseract():
-                tesseract_path = shutil.which("tesseract")
-                
-                if not tesseract_path:
-                    raise RuntimeError("Tesseract binary not found in runtime environment")
-                
-                pytesseract.pytesseract.tesseract_cmd = tesseract_path
-                logger.info(f"[DOC OCR] Tesseract configured at: {tesseract_path}")
             
             # Configure tesseract before OCR
-            configure_tesseract()
+            tesseract_path = shutil.which("tesseract")
+            pytesseract.pytesseract.tesseract_cmd = tesseract_path
+            logger.info(f"[TESSERACT] Tesseract configured at: {tesseract_path}")
             
             # Open image from bytes
             image = PIL.Image.open(io.BytesIO(file_content))
@@ -1589,7 +1795,7 @@ class DocumentProcessingService:
             # Convert to RGB if necessary (tesseract works best with RGB)
             if image.mode != 'RGB':
                 image = image.convert('RGB')
-                logger.debug("[DOC OCR] Converted image to RGB mode")
+                logger.debug("[TESSERACT] Converted image to RGB mode")
             
             # Apply basic preprocessing for better OCR accuracy
             import PIL.ImageEnhance
@@ -1612,38 +1818,38 @@ class DocumentProcessingService:
                 threshold = 128
                 img_array = np.where(img_array > threshold, 255, 0).astype(np.uint8)
                 processed_image = Image.fromarray(img_array, mode='L')
-                logger.debug("[DOC OCR] Applied numpy threshold preprocessing")
+                logger.debug("[TESSERACT] Applied numpy threshold preprocessing")
             except ImportError:
                 # Fallback: use PIL's built-in point operation
                 processed_image = gray_image.point(lambda x: 0 if x < 128 else 255, mode='1')
-                logger.debug("[DOC OCR] Applied PIL threshold preprocessing")
+                logger.debug("[TESSERACT] Applied PIL threshold preprocessing")
             
-            # STEP 3: FIX OCR EXECUTION - Marathi + English
+            # STEP 3: TESSERACT OCR EXECUTION - Marathi + English
             try:
                 extracted_text = pytesseract.image_to_string(
                     processed_image,
                     lang="mar+eng"
                 )
-                logger.info("[DOC OCR] Marathi+English OCR completed")
+                logger.info("[TESSERACT] Marathi+English OCR completed")
             except Exception as lang_error:
-                logger.warning(f"[DOC OCR] Marathi+English OCR failed, falling back to English only: {lang_error}")
+                logger.warning(f"[TESSERACT] Marathi+English OCR failed, falling back to English only: {lang_error}")
                 # Fallback to English only
                 extracted_text = pytesseract.image_to_string(processed_image, lang="eng")
             
-            # PART 8: Enhanced handwritten/low OCR safety
+            # STEP 4: Enhanced handwritten/low OCR safety
             text_length = len(extracted_text.strip())
             
             # Check for completely empty extraction
             if text_length == 0:
-                logger.error(f"[DOC OCR] No text extracted from image {filename} - may be unreadable or handwritten")
+                logger.error(f"[TESSERACT] No text extracted from image {filename} - may be unreadable or handwritten")
                 raise ValueError("No text could be extracted from image - document may be handwritten or corrupted")
             
             # Check for very low extraction (potential handwritten)
             elif text_length < 20:
-                logger.warning(f"[DOC OCR] Very low text extraction from image {filename}: {text_length} chars - possible handwritten document")
+                logger.warning(f"[TESSERACT] Very low text extraction from image {filename}: {text_length} chars - possible handwritten document")
                 # Add OCR quality warning to the text for downstream processing
                 extracted_text = f"[LOW_OCR_QUALITY] {extracted_text.strip()}"
-                logger.warning(f"[DOC OCR] Added low OCR quality warning for downstream processing")
+                logger.warning(f"[TESSERACT] Added low OCR quality warning for downstream processing")
             
             # Check for common OCR error patterns that indicate handwriting
             ocr_error_patterns = [
@@ -1654,17 +1860,17 @@ class DocumentProcessingService:
             
             for pattern in ocr_error_patterns:
                 if pattern in extracted_text.lower():
-                    logger.warning(f"[DOC OCR] Detected handwriting pattern '{pattern}' in {filename}")
+                    logger.warning(f"[TESSERACT] Detected handwriting pattern '{pattern}' in {filename}")
                     extracted_text = f"[HANDWRITING_DETECTED] {extracted_text.strip()}"
                     break
             
-            logger.info(f"[DOC OCR] Image OCR extraction complete: {text_length} chars")
+            logger.info(f"[TESSERACT] Image OCR extraction complete: {text_length} chars")
             return extracted_text.strip()
             
-        except Exception as ocr_error:
-            logger.error(f"[DOC OCR] OCR processing failed: {ocr_error}")
-            # Raise exception instead of returning fake JSON text
-            raise ValueError(f"OCR failed: Tesseract not available or extraction failed - {str(ocr_error)}")
+        except Exception as tesseract_error:
+            logger.error(f"[TESSERACT] Tesseract OCR processing failed: {tesseract_error}")
+            # Raise exception that indicates both OCR engines failed
+            raise ValueError(f"OCR failed: Both PaddleOCR and Tesseract failed - PaddleOCR unavailable/failed, Tesseract failed: {str(tesseract_error)}")
     
     def _extract_text_from_text_file(self, file_content: bytes) -> str:
         """Extract text from text file bytes"""
